@@ -54,6 +54,7 @@ def train(rnn, criterion, optimizer, train_data, question_data, hidden_size, num
 	outer_batch_size = 25
 		
 	for i in range(num_samples / outer_batch_size):
+
 		input_batch = train_data[i*outer_batch_size:(i+1)*outer_batch_size]
 		# input_batch = train_data[:outer_batch_size] # for testing if weights or loss change
 		X_scores = []
