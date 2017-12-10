@@ -26,9 +26,9 @@ class RNN(nn.Module):
 
 
 def mean_pooling(rnn, hidden, state, question_embedding, question_mask, sample):
-	input_minibatch = torch.functional.stack([question_embedding[s] for s in sample]).permute(1,0,2)
-	mask_minibatch = torch.functional.stack([question_mask[s] for s in sample]).permute(1,0,2)
-	output_matrix = rnn(Variable(input_minibatch, requires_grad=True), hidden, state).data*mask_minibatch
+	input_minibatch = Variable(torch.functional.stack([question_embedding[s] for s in sample]).permute(1,0,2), requires_grad=True)
+	mask_minibatch = Variable(torch.functional.stack([question_mask[s] for s in sample]).permute(1,0,2), requires_grad=True)
+	output_matrix = rnn(input_minibatch, hidden, state)*mask_minibatch
 	sum_matrix = torch.sum(output_matrix, 0)
 	num_words_matrix = torch.sum(mask_minibatch, 0)
 	return sum_matrix/num_words_matrix
@@ -47,16 +47,12 @@ def train(rnn, criterion, optimizer, train_data, question_data, hidden_size, num
 	state = Variable(torch.zeros(num_layers*2, batch_size, hidden_size))
 	rnn.zero_grad()
 
-	train_data = train_data[:300] # ONLY FOR DEBUGGING, REMOVE LINE TO RUN ON ALL TRAINING DATA
-
 	TITLE_EMB, TITLE_MASK, BODY_EMB, BODY_MASK = question_data
 	num_samples = train_data.size(0)
 	outer_batch_size = 25
 		
 	for i in range(num_samples / outer_batch_size):
-
 		input_batch = train_data[i*outer_batch_size:(i+1)*outer_batch_size]
-		# input_batch = train_data[:outer_batch_size] # for testing if weights or loss change
 		X_scores = []
 
 		for sample in input_batch:
@@ -69,27 +65,13 @@ def train(rnn, criterion, optimizer, train_data, question_data, hidden_size, num
 			cos = nn.CosineSimilarity(dim=1)(query_matrix, candidate_matrix)
 			X_scores.append(cos)
 
-		X_scores = Variable(torch.functional.stack(X_scores), requires_grad=True)
+		X_scores = torch.stack(X_scores)
 		targets = Variable(torch.zeros(X_scores.size(0)).type(torch.LongTensor))
-
-		# print(X_scores, targets)
-		# a = list(rnn.parameters())[0].clone()
 
 		optimizer.zero_grad()
 		loss = criterion(X_scores, targets)
 		loss.backward()
 		optimizer.step()
-
-		# b = list(rnn.parameters())[0].clone()
-		# print(torch.equal(a.data, b.data))
-
-		# for p in rnn.parameters():
-		# 	print(p)
-		# 	print(p.data)
-		# 	print(p.grad.data)
-
-		# print(loss.data[0])
-
 	return loss.data[0]
 
 
@@ -114,7 +96,7 @@ def evaluate(rnn, eval_data, label_dict, question_data, hidden_size, num_layers,
 		cos = nn.CosineSimilarity(dim=1)(query_matrix, candidate_matrix)
 		golden_tags = label_dict[sample[0]]
 
-		sorted_output = [golden_tags for _,golden_tags in sorted(zip(cos,golden_tags),reverse=True)]
+		sorted_output = [golden_tags for _,golden_tags in sorted(zip(cos.data,golden_tags),reverse=True)]
 		sorted_output_data.append(sorted_output)
 	metrics = compute_metrics(sorted_output_data)
 	return metrics
@@ -123,9 +105,9 @@ def evaluate(rnn, eval_data, label_dict, question_data, hidden_size, num_layers,
 if __name__ == '__main__':
 	parser = OptionParser()
 	parser.add_option("--batch_size", dest="batch_size", default="22")
-	parser.add_option("--hidden_size", dest="hidden_size", default="125")
-	parser.add_option("--num_epochs", dest="num_epochs", default="5")
-	parser.add_option("--learning_rate", dest="learning_rate", default="1e-4")
+	parser.add_option("--hidden_size", dest="hidden_size", default="120")
+	parser.add_option("--num_epochs", dest="num_epochs", default="20")
+	parser.add_option("--learning_rate", dest="learning_rate", default="7e-4")
 	parser.add_option("--print_epochs", dest="print_epochs", default="1")
 	opts,args = parser.parse_args()
 
@@ -144,6 +126,8 @@ if __name__ == '__main__':
 	TEST_DATA, TEST_LABEL_DICT, TEST_SCORES = read_eval_data("askubuntu-master/test.txt")
 
 	rnn = RNN(n_features, hidden_size, n_layers, batch_size)
+	pdb.set_trace()
+
 	optimizer = optim.Adam(rnn.parameters(), lr=learning_rate)
 	criterion = nn.MultiMarginLoss(margin=0.2)
 	print("Starting run with batch_size: %d, hidden size: %d, learning rate: %.4f"%(batch_size, hidden_size, learning_rate))
