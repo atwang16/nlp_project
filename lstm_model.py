@@ -125,8 +125,10 @@ if __name__ == '__main__':
 	DEV_DATA, DEV_LABEL_DICT, DEV_SCORES = read_eval_data("askubuntu-master/dev.txt")
 	TEST_DATA, TEST_LABEL_DICT, TEST_SCORES = read_eval_data("askubuntu-master/test.txt")
 
+	TRAIN_DATA = TRAIN_DATA[:300]
+
 	rnn = RNN(n_features, hidden_size, n_layers, batch_size)
-	pdb.set_trace()
+	# pdb.set_trace()
 
 	optimizer = optim.Adam(rnn.parameters(), lr=learning_rate)
 	criterion = nn.MultiMarginLoss(margin=0.2)
