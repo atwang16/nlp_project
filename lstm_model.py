@@ -106,7 +106,7 @@ if __name__ == '__main__':
 	parser = OptionParser()
 	parser.add_option("--batch_size", dest="batch_size", default="22")
 	parser.add_option("--hidden_size", dest="hidden_size", default="120")
-	parser.add_option("--num_epochs", dest="num_epochs", default="20")
+	parser.add_option("--num_epochs", dest="num_epochs", default="5")
 	parser.add_option("--learning_rate", dest="learning_rate", default="7e-4")
 	parser.add_option("--print_epochs", dest="print_epochs", default="1")
 	opts,args = parser.parse_args()
@@ -126,12 +126,10 @@ if __name__ == '__main__':
 	TEST_DATA, TEST_LABEL_DICT, TEST_SCORES = read_eval_data("askubuntu-master/test.txt")
 
 	rnn = RNN(n_features, hidden_size, n_layers, batch_size)
-	pdb.set_trace()
-
 	optimizer = optim.Adam(rnn.parameters(), lr=learning_rate)
 	criterion = nn.MultiMarginLoss(margin=0.2)
 	print("Starting run with batch_size: %d, hidden size: %d, learning rate: %.4f"%(batch_size, hidden_size, learning_rate))
-	
+
 	start = time.time()
 	current_loss = 0
 
