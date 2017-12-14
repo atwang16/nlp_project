@@ -9,20 +9,35 @@ import pdb
 from lstm_model_utils import *
 from optparse import OptionParser
 
-class RNN(nn.Module):
-    def __init__(self, input_size, hidden_size, n_layers, batch_size):
-        super(RNN, self).__init__()
-        self.batch_size = batch_size
-        self.hidden_size = hidden_size
-        self.num_layers = n_layers
-        self.rnn = nn.LSTM(input_size=input_size, hidden_size=hidden_size,
-                          num_layers=n_layers, batch_first=False, dropout=0.1, bidirectional=True)
-        return
+# PATHS
+word_embedding_path = "../askubuntu-master/vector/vectors_pruned.200.txt.gz"
+question_path = "../askubuntu-master/text_tokenized.txt.gz"
+train_data_path = "../askubuntu-master/train_random.txt"
+dev_data_path = "../askubuntu-master/dev.txt"
+test_data_path = "../askubuntu-master/test.txt"
 
-    def forward(self, input_tensor, hidden, state):
-        output, hc_n = self.rnn(input_tensor, (hidden, state))
-        h_n, c_n = hc_n[0], hc_n[1]
-        return output
+# CONSTANTS
+OUTER_BATCH_SIZE = 25
+HIDDEN_SIZE = 120
+DFT_NUM_EPOCHS = 5
+DFT_LEARNING_RATE = 7e-4
+DFT_PRINT_EPOCHS = 1
+DEBUG = False
+
+class RNN(nn.Module):
+	def __init__(self, input_size, hidden_size, n_layers, batch_size):
+		super(RNN, self).__init__()
+		self.batch_size = batch_size
+		self.hidden_size = hidden_size
+		self.num_layers = n_layers
+		self.rnn = nn.LSTM(input_size=input_size, hidden_size=hidden_size,
+						  num_layers=n_layers, batch_first=False, dropout=0.1, bidirectional=True)
+		return
+
+	def forward(self, input_tensor, hidden, state):
+		output, hc_n = self.rnn(input_tensor, (hidden, state))
+		h_n, c_n = hc_n[0], hc_n[1]
+		return output
 
 
 def mean_pooling(rnn, hidden, state, question_embedding, question_mask, sample):
@@ -49,10 +64,9 @@ def train(rnn, criterion, optimizer, train_data, question_data, hidden_size, num
 
 	TITLE_EMB, TITLE_MASK, BODY_EMB, BODY_MASK = question_data
 	num_samples = train_data.size(0)
-	outer_batch_size = 25
 		
-	for i in range(num_samples / outer_batch_size):
-		input_batch = train_data[i*outer_batch_size:(i+1)*outer_batch_size]
+	for i in range(num_samples / OUTER_BATCH_SIZE):
+		input_batch = train_data[i*OUTER_BATCH_SIZE:(i+1)*OUTER_BATCH_SIZE]
 		X_scores = []
 
 		for sample in input_batch:
@@ -103,47 +117,52 @@ def evaluate(rnn, eval_data, label_dict, question_data, hidden_size, num_layers,
 
 
 if __name__ == '__main__':
+	# Create parser and extract arguments
 	parser = OptionParser()
-	parser.add_option("--batch_size", dest="batch_size", default="22")
-	parser.add_option("--hidden_size", dest="hidden_size", default="120")
-	parser.add_option("--num_epochs", dest="num_epochs", default="5")
-	parser.add_option("--learning_rate", dest="learning_rate", default="7e-4")
-	parser.add_option("--print_epochs", dest="print_epochs", default="1")
+	parser.add_option("--batch_size", dest="batch_size", default=str(OUTER_BATCH_SIZE))
+	parser.add_option("--hidden_size", dest="hidden_size", default=str(HIDDEN_SIZE))
+	parser.add_option("--num_epochs", dest="num_epochs", default=str(DFT_NUM_EPOCHS))
+	parser.add_option("--learning_rate", dest="learning_rate", default=str(DFT_LEARNING_RATE))
+	parser.add_option("--print_epochs", dest="print_epochs", default=str(DFT_PRINT_EPOCHS))
 	opts,args = parser.parse_args()
 
-	batch_size = int(opts.batch_size)
-	hidden_size = int(opts.hidden_size)
+	# Set parameters
 	n_layers = 1
 	n_features = 200
+	outer_batch_size = int(opts.batch_size)
+	hidden_size = int(opts.hidden_size)
 	learning_rate = float(opts.learning_rate)
 	n_epochs = int(opts.num_epochs)
 	print_every = int(opts.print_epochs)
 
-	EMBEDDING = create_embedding_dict("askubuntu-master/vector/vectors_pruned.200.txt.gz")
-	QUESTIONS = create_question_dict("askubuntu-master/text_tokenized.txt.gz", EMBEDDING, hidden_size)
-	TRAIN_DATA = read_training_data("askubuntu-master/train_random.txt")
-	DEV_DATA, DEV_LABEL_DICT, DEV_SCORES = read_eval_data("askubuntu-master/dev.txt")
-	TEST_DATA, TEST_LABEL_DICT, TEST_SCORES = read_eval_data("askubuntu-master/test.txt")
+	# Load data
+	print("LOADING DATA...")
+	embedding = create_embedding_dict(word_embedding_path)
+	questions = create_question_dict(question_path, embedding, hidden_size)
+	train_data = read_training_data(train_data_path)
+	dev_data, dev_label_dict, dev_scores = read_eval_data(dev_data_path)
+	test_data, test_label_dict, test_scores = read_eval_data(test_data_path)
 
-	TRAIN_DATA = TRAIN_DATA[:300]
+	if DEBUG:
+		train_data = train_data[:300]  # ONLY FOR DEBUGGING, REMOVE LINE TO RUN ON ALL TRAINING DATA
 
-	rnn = RNN(n_features, hidden_size, n_layers, batch_size)
-	# pdb.set_trace()
-
+	# Create model
+	rnn = RNN(n_features, hidden_size, n_layers, batch_size=22)
 	optimizer = optim.Adam(rnn.parameters(), lr=learning_rate)
 	criterion = nn.MultiMarginLoss(margin=0.2)
-	print("Starting run with batch_size: %d, hidden size: %d, learning rate: %.4f"%(batch_size, hidden_size, learning_rate))
 
+	# Training
+	print("Starting run with batch_size: %d, hidden size: %d, learning rate: %.4f"%(outer_batch_size, hidden_size, learning_rate))
 	start = time.time()
 	current_loss = 0
 
 	for iter in range(1, n_epochs + 1):
-		avg_loss = train(rnn, criterion, optimizer, TRAIN_DATA, QUESTIONS, hidden_size, n_layers, batch_size)
+		avg_loss = train(rnn, criterion, optimizer, train_data, questions, hidden_size, n_layers, batch_size=22)
 		current_loss += avg_loss
 
 		if iter % print_every == 0:
-			d_MAP, d_MRR, d_P_1, d_P_5 = evaluate(rnn, DEV_DATA, DEV_LABEL_DICT, QUESTIONS, hidden_size, n_layers, batch_size=21)
-			t_MAP, t_MRR, t_P_1, t_P_5 = evaluate(rnn, TEST_DATA, TEST_LABEL_DICT, QUESTIONS, hidden_size, n_layers, batch_size=21)
+			d_MAP, d_MRR, d_P_1, d_P_5 = evaluate(rnn, dev_data, dev_label_dict, questions, hidden_size, n_layers, batch_size=21)
+			t_MAP, t_MRR, t_P_1, t_P_5 = evaluate(rnn, test_data, test_label_dict, questions, hidden_size, n_layers, batch_size=21)
 			print("Epoch %d: Average Train Loss: %.5f, Time: %s"%(iter, (current_loss / print_every), timeSince(start)))
 			print("Dev MAP: %.1f, MRR: %.1f, P@1: %.1f, P@5: %.1f"%(d_MAP*100, d_MRR*100, d_P_1*100, d_P_5*100))
 			print("Test MAP: %.1f, MRR: %.1f, P@1: %.1f, P@5: %.1f"%(t_MAP*100, t_MRR*100, t_P_1*100, t_P_5*100))
