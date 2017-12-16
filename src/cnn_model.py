@@ -32,7 +32,7 @@ TRAIN_HYPER_PARAM = False
 SAVE_MODEL = True
 
 # HYPERPARAMETER TESTING
-hidden_size_arr = [333]
+hidden_size_arr = [667, 333]
 filter_width_arr = [2, 3, 4]
 loss_margin_arr = [0.1, 0.2, 0.4]
 dropout_prob_arr = [0.1, 0.2, 0.3]
@@ -101,16 +101,26 @@ class CNN(nn.Module):
         return out
 
 
-def compute(model, question_embedding, question_mask, sample, is_training):
-    input_minibatch = Variable(torch.stack([question_embedding[s] for s in sample], dim=0), requires_grad=True)
-    mask_minibatch = Variable(torch.stack([question_mask[s] for s in sample], dim=0), requires_grad=False)
+def compute(model, question_embedding, question_mask, sample, is_training, num_comparisons=None):
+    inputs = []
+    masks = []
+    i = 0
+    for s in sample:
+        if num_comparisons is None or i <= num_comparisons:
+            inputs.append(question_embedding[s])
+            masks.append(question_mask[s])
+            i += 1
+        else:
+            break
+    input_minibatch = Variable(torch.stack(inputs, dim=0), requires_grad=True)
+    mask_minibatch = Variable(torch.stack(masks, dim=0), requires_grad=False)
     return model(input_minibatch, mask_minibatch, is_training)
 
 
 def evaluate_sample(model, question_data, sample, num_comparisons, is_training):
     title_embedding, title_mask, body_embedding, body_mask = question_data
-    encoded_title_matrix = compute(model, title_embedding, title_mask, sample, is_training)
-    encoded_body_matrix = compute(model, body_embedding, body_mask, sample, is_training)
+    encoded_title_matrix = compute(model, title_embedding, title_mask, sample, is_training, num_comparisons)
+    encoded_body_matrix = compute(model, body_embedding, body_mask, sample, is_training, num_comparisons)
     encoded_matrix = 0.5 * (encoded_title_matrix + encoded_body_matrix)
 
     encoded_matrix = encoded_matrix.squeeze(dim=2)
@@ -119,7 +129,7 @@ def evaluate_sample(model, question_data, sample, num_comparisons, is_training):
     return nn.CosineSimilarity(dim=1)(query_matrix, candidate_matrix)
 
 
-def train(model, criterion, optimizer, train_data, question_data, batch_size):
+def train(model, criterion, optimizer, train_data, question_data, batch_size, num_comparisons):
     cum_loss = 0
     model.zero_grad()
 
@@ -134,8 +144,7 @@ def train(model, criterion, optimizer, train_data, question_data, batch_size):
         X_scores = []
 
         for sample in input_batch: # loop through each sample in batch
-            cos = evaluate_sample(model, question_data, sample, 21, True)
-            # 21 is the number of comparisons, 1 positive and 20 negative
+            cos = evaluate_sample(model, question_data, sample, num_comparisons, True)
             X_scores.append(cos)
 
         X_scores = torch.stack(X_scores)
@@ -183,7 +192,7 @@ def train_model(embedding_size, hidden_size, filter_width, max_or_mean, max_num_
     current_loss = 0
 
     for iter in range(init_epoch, max_num_epochs + 1):
-        current_loss += train(cnn, criterion, optimizer, train_data, questions, batch_size)
+        current_loss += train(cnn, criterion, optimizer, train_data, questions, batch_size, 21)
         if iter % training_checkpoint == 0:
             d_MAP, d_MRR, d_P_1, d_P_5 = evaluate(cnn, dev_data, dev_label_dict, questions)
             t_MAP, t_MRR, t_P_1, t_P_5 = evaluate(cnn, test_data, test_label_dict, questions)
@@ -236,7 +245,6 @@ def train_model(embedding_size, hidden_size, filter_width, max_or_mean, max_num_
 
 
 def evaluate(model, eval_data, eval_label_dict, question_data):
-    global print_result
     sorted_output_data = []
 
     for sample in eval_data:

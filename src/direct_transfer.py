@@ -1,21 +1,19 @@
 import torch.nn as nn
-import time
-from torch.autograd import Variable
 import torch.optim as optim
-import pdb
-from lstm_model_utils import *
-from transfer_utils import *
 from meter import *
 from optparse import OptionParser
-from cnn_model import CNN, train, compute
+from cnn_model import CNN, train, compute, evaluate
 from utils import *
 import os
+import sys
 
 # PATHS
 word_embedding_path = "../glove.840B.300d.txt"
 ubuntu_question_path = "../askubuntu-master/text_tokenized.txt.gz"
-android_question_path = "../Android-master/corpus.tsv.gz"
 train_data_path = "../askubuntu-master/train_random.txt"
+dev_data_path = "../askubuntu-master/dev.txt"
+test_data_path = "../askubuntu-master/test.txt"
+android_question_path = "../Android-master/corpus.tsv.gz"
 dev_pos_data_path = "../Android-master/dev.pos.txt"
 dev_neg_data_path = "../Android-master/dev.neg.txt"
 test_pos_data_path = "../Android-master/test.pos.txt"
@@ -23,7 +21,7 @@ test_neg_data_path = "../Android-master/test.neg.txt"
 
 # CONSTANTS
 DFT_EMBEDDING_SIZE = 300
-DFT_HIDDEN_SIZE = 667
+DFT_HIDDEN_SIZE = 333
 DFT_LOSS_MARGIN = 0.1
 DFT_KERNEL_SIZE = 3 # number of words to include in each feature map
 DFT_DROPOUT_PROB = 0.3
@@ -38,11 +36,42 @@ DFT_SAVE_MODEL_PATH = os.path.join("..", "models", "cnn")
 TRAIN_HYPER_PARAM = True
 SAVE_MODEL = False
 
+#HYPERPARAMETER TESTING
+hidden_size_arr = [667]
+filter_width_arr = [2, 3, 4]
+loss_margin_arr = [0.1, 0.2, 0.4]
+dropout_prob_arr = [0.1, 0.2, 0.3]
+learning_rate_arr = [0.0002]
+batch_size_arr = [20]
+max_mean_arr = ["MAX", "MEAN"]
+
+
+class Logger(object):
+    """
+    Stack Overflow Logger class: https://stackoverflow.com/questions/14906764/how-to-redirect-stdout-to-both-file-and-console-with-scripting
+    """
+    def __init__(self, filename):
+        self.terminal = sys.stdout
+        self.log = open(filename, "w")
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+
+    def flush(self):
+        #this flush method is needed for python 3 compatibility.
+        #this handles the flush command by doing nothing.
+        #you might want to specify some extra behavior here.
+        pass
+
+sys.stdout = Logger("../models/cnn/direct_transfer_results.txt")
+
 
 def train_model(embedding_size, hidden_size, filter_width, max_or_mean, max_num_epochs, batch_size, learning_rate,
                 loss_margin, training_checkpoint, dropout_prob):
     global load_model_path, train_data, source_questions
     global dev_pos_data, dev_neg_data, test_pos_data, test_neg_data, target_questions
+    global dev_data, dev_label_dict, test_data, test_label_dict
 
     # Generate model
     cnn = CNN(embedding_size, hidden_size, filter_width, max_or_mean, dropout_prob)
@@ -73,14 +102,16 @@ def train_model(embedding_size, hidden_size, filter_width, max_or_mean, max_num_
     current_loss = 0
 
     for iter in range(init_epoch, max_num_epochs + 1):
-        current_loss += train(cnn, criterion, optimizer, train_data, source_questions, batch_size)
+        current_loss += train(cnn, criterion, optimizer, train_data, source_questions, batch_size, 2)
         if iter % training_checkpoint == 0:
-            d_auc = evaluate(cnn, (dev_pos_data, dev_neg_data), target_questions)
-            t_auc = evaluate(cnn, (test_pos_data, test_neg_data), target_questions)
+            d_MAP, d_MRR, d_P_1, d_P_5 = evaluate(cnn, dev_data, dev_label_dict, source_questions)
+            t_MAP, t_MRR, t_P_1, t_P_5 = evaluate(cnn, test_data, test_label_dict, source_questions)
             print("Epoch %d: Average Train Loss: %.5f, Time: %s" % (
-            iter, (current_loss / training_checkpoint), timeSince(start)))
-            print("Dev AUC(0.05): %.2f" % (d_auc))
-            print("Test AUC(0.05): %.2f" % (t_auc))
+                iter, (current_loss / training_checkpoint), timeSince(start)))
+            print("Dev MAP: %.1f, MRR: %.1f, P@1: %.1f, P@5: %.1f" % (
+                d_MAP * 100, d_MRR * 100, d_P_1 * 100, d_P_5 * 100))
+            print("Test MAP: %.1f, MRR: %.1f, P@1: %.1f, P@5: %.1f" % (
+                t_MAP * 100, t_MRR * 100, t_P_1 * 100, t_P_5 * 100))
             current_loss = 0
 
             if SAVE_MODEL:
@@ -93,8 +124,8 @@ def train_model(embedding_size, hidden_size, filter_width, max_or_mean, max_num_
     # Compute final results
     print("-------")
     print("FINAL RESULTS:")
-    d_auc = evaluate(cnn, (dev_pos_data, dev_neg_data), target_questions)
-    t_auc = evaluate(cnn, (test_pos_data, test_neg_data), target_questions)
+    d_auc = evaluate_auc(cnn, (dev_pos_data, dev_neg_data), target_questions)
+    t_auc = evaluate_auc(cnn, (test_pos_data, test_neg_data), target_questions)
     print("Training time: %s" % (timeSince(start)))
     print("Dev AUC(0.05): %.2f" % (d_auc))
     print("Test AUC(0.05): %.2f" % (t_auc))
@@ -110,40 +141,38 @@ def train_model(embedding_size, hidden_size, filter_width, max_or_mean, max_num_
 
 
 def evaluate_batch(model, emb, mask, sample):
-    encoded_title_matrix = compute(model, emb[0], mask[0], sample, False)
+    encoded_title_matrix = compute(model, emb[0], mask[0], sample, False, )
     encoded_body_matrix = compute(model, emb[1], mask[1], sample, False)
     encoded_matrix = 0.5 * (encoded_title_matrix + encoded_body_matrix)
     encoded_matrix = encoded_matrix.squeeze(dim=2)
     return encoded_matrix
 
 
-def evaluate_data(model, data, emb, mask, meter, pos):
+def evaluate_data(model, data, emb, mask, meter, pos, batch_size):
     query_tensor = data[:,0]
     candidate_tensor = data[:,1]
     encoded_queries = evaluate_batch(model, emb, mask, query_tensor)
     encoded_candidates = evaluate_batch(model, emb, mask, candidate_tensor)
     scores = nn.CosineSimilarity(dim=1)(encoded_queries, encoded_candidates)
-    print scores.size()
     if pos:
-        expected = torch.ones(EVAL_BATCH_SIZE).type(torch.LongTensor)
+        expected = torch.ones(batch_size).type(torch.LongTensor)
     else:
-        expected = torch.zeros(EVAL_BATCH_SIZE).type(torch.LongTensor)
-    print expected.size()
+        expected = torch.zeros(batch_size).type(torch.LongTensor)
     meter.add(scores.data, expected)
 
 
-def evaluate(model, eval_data, question_data):
+def evaluate_auc(model, eval_data, question_data):
     pos_data, neg_data = eval_data
     TITLE_EMB, TITLE_MASK, BODY_EMB, BODY_MASK = question_data
     meter = AUCMeter()
 
     # Evaluate positive data
-    evaluate_data(model, pos_data, (TITLE_EMB, BODY_EMB), (TITLE_MASK, BODY_MASK), meter, True)
+    evaluate_data(model, pos_data, (TITLE_EMB, BODY_EMB), (TITLE_MASK, BODY_MASK), meter, True, pos_data.size(0))
 
     # Evaluate negative data
     for i in range(neg_data.size(0) / EVAL_BATCH_SIZE):
         input_data = neg_data[i*EVAL_BATCH_SIZE:(i+1)*EVAL_BATCH_SIZE]
-        evaluate_data(model, input_data, (TITLE_EMB, BODY_EMB), (TITLE_MASK, BODY_MASK), meter, False)
+        evaluate_data(model, input_data, (TITLE_EMB, BODY_EMB), (TITLE_MASK, BODY_MASK), meter, False, EVAL_BATCH_SIZE)
 
     score = meter.value(max_fpr=0.05)
     return score
@@ -184,6 +213,8 @@ if __name__ == '__main__':
     source_questions = create_question_dict("CNN", ubuntu_question_path, embedding, hidden_size, embedding_size=DFT_EMBEDDING_SIZE)
     target_questions = create_question_dict("CNN", android_question_path, embedding, hidden_size, embedding_size=DFT_EMBEDDING_SIZE)
     train_data = read_training_data(train_data_path)
+    dev_data, dev_label_dict, dev_scores = read_eval_data(dev_data_path)
+    test_data, test_label_dict, test_scores = read_eval_data(test_data_path)
     dev_pos_data = read_android_eval_data(dev_pos_data_path)
     dev_neg_data = read_android_eval_data(dev_neg_data_path)
     test_pos_data = read_android_eval_data(test_pos_data_path)
@@ -191,16 +222,43 @@ if __name__ == '__main__':
     
     if DEBUG:
         train_data = train_data[:300]  # ONLY FOR DEBUGGING, REMOVE LINE TO RUN ON ALL TRAINING DATA
+        dev_neg_data = dev_neg_data[:10000]
+        test_neg_data = dev_neg_data[:10000]
 
-    train_model(DFT_EMBEDDING_SIZE,
-                hidden_size,
-                filter_width,
-                max_or_mean,
-                max_num_epochs,
-                batch_size,
-                learning_rate,
-                loss_margin,
-                training_checkpoint,
-                dropout_prob)
+    if TRAIN_HYPER_PARAM:
+        i = 1
+        total = len(hidden_size_arr) * len(filter_width_arr) * len(loss_margin_arr) * len(learning_rate_arr) * \
+                len(batch_size_arr) * len(max_mean_arr) * len(dropout_prob_arr)
+        for hs in hidden_size_arr:
+            for fw in filter_width_arr:
+                for lm in loss_margin_arr:
+                    for lr in learning_rate_arr:
+                        for bs in batch_size_arr:
+                            for m in max_mean_arr:
+                                for dp in dropout_prob_arr:
+                                    train_model(DFT_EMBEDDING_SIZE,
+                                                hs,
+                                                fw,
+                                                m,
+                                                max_num_epochs,
+                                                bs,
+                                                lr,
+                                                lm,
+                                                training_checkpoint,
+                                                dp)
+                                    print "Model " + str(i) + "/" + str(total)
+                                    i += 1
+
+    else:
+        train_model(DFT_EMBEDDING_SIZE,
+                    hidden_size,
+                    filter_width,
+                    max_or_mean,
+                    max_num_epochs,
+                    batch_size,
+                    learning_rate,
+                    loss_margin,
+                    training_checkpoint,
+                    dropout_prob)
 
     
