@@ -4,9 +4,12 @@ import pdb
 import gzip
 
 # maps word to embedding tensor
-def create_embedding_dict(filename):
+def create_embedding_dict(filename, glove=False):
 	word_to_embedding = {}
-	f = gzip.open(filename, 'r')
+	if glove:
+		f = open(filename, 'r')
+	else:
+		f = gzip.open(filename, 'r')
 	for l in f.readlines():
 		line = l.split()
 		word = line[0]
@@ -31,22 +34,22 @@ def create_question_dict(filename, embedding, hidden_size):
 		line = l.split('\t')
 		id, title, body = line
 
-		title_words = torch.zeros(25, 200)
+		title_words = torch.zeros(25, len(embedding.itervalues().next()))
 		title_mask = torch.zeros(25, hidden_size*2)
-		body_words = torch.zeros(75, 200)
+		body_words = torch.zeros(75, len(embedding.itervalues().next()))
 		body_mask = torch.zeros(75, hidden_size*2)
 
 		i = 0
 		for w in title.split():
-			if i < 25 and w in embedding:
-				title_words[i] = embedding[w]
+			if i < 25 and w.lower() in embedding:
+				title_words[i] = embedding[w.lower()]
 				title_mask[i] = torch.ones(hidden_size*2)
 			i += 1
 
 		i = 0
 		for w in body.split():
-			if i < 75 and w in embedding:
-				body_words[i] = embedding[w]
+			if i < 75 and w.lower() in embedding:
+				body_words[i] = embedding[w.lower()]
 				body_mask[i] = torch.ones(hidden_size*2)
 			i += 1
 
