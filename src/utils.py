@@ -2,6 +2,8 @@ import numpy as np
 import torch
 import pdb
 import gzip
+import shutil
+import os
 
 # maps word to embedding tensor
 def create_embedding_dict(filename):
@@ -27,7 +29,7 @@ def create_embedding_dict(filename):
 # 2) mask for padding titles
 # 3) body embedding tensors (padded to 75)
 # 4) mask for padding bodies
-def create_question_dict(model_type, filename, embedding, hidden_size, title_pad_size=25, body_pad_size=75, embedding_size=200):
+def create_question_dict(model_type, filename, embedding, hidden_size, title_size=25, body_size=75, init_padding=0, embedding_size=200):
     title_embeddings_dict = {}
     title_mask_dict = {}
     body_embeddings_dict = {}
@@ -43,23 +45,33 @@ def create_question_dict(model_type, filename, embedding, hidden_size, title_pad
         line = l.split('\t')
         id, title, body = line
 
-        title_words = torch.zeros(title_pad_size, embedding_size)
-        title_mask = torch.zeros(title_pad_size, dim)
-        body_words = torch.zeros(body_pad_size, embedding_size)
-        body_mask = torch.zeros(body_pad_size, dim)
+        title_words = torch.zeros(init_padding + title_size, embedding_size)
+        title_mask = torch.zeros(init_padding + title_size, dim)
+        body_words = torch.zeros(init_padding + body_size, embedding_size)
+        body_mask = torch.zeros(init_padding + body_size, dim)
 
         i = 0
-        for w in title.split():
-            if i < title_pad_size and w in embedding:
-                title_words[i] = embedding[w]
+        title_split = title.split()
+        while i < init_padding + title_size and i < init_padding + len(title_split):
+            if i < init_padding:
                 title_mask[i] = torch.ones(dim)
+            else:
+                w = title_split[i - init_padding]
+                if w in embedding:
+                    title_words[i] = embedding[w]
+                    title_mask[i] = torch.ones(dim)
             i += 1
 
         i = 0
-        for w in body.split():
-            if i < body_pad_size and w in embedding:
-                body_words[i] = embedding[w]
+        body_split = body.split()
+        while i < init_padding + body_size and i < init_padding + len(body_split):
+            if i < init_padding:
                 body_mask[i] = torch.ones(dim)
+            else:
+                w = body_split[i - init_padding]
+                if w in embedding:
+                    body_words[i] = embedding[w]
+                    body_mask[i] = torch.ones(dim)
             i += 1
 
         if model_type == "CNN":
@@ -164,3 +176,21 @@ def precision(data, precision_at):
             scores.append(sum([1 if val==1 else 0 for val in temp])*1.0 / len(temp) if len(temp) > 0 else 0.0)
     return sum(scores)/len(scores) if len(scores) > 0 else 0.0
 
+def save_model(save_model_dest, model_name, state, is_best):
+    if "epoch" in state:
+        filename = os.path.join(save_model_dest, model_name + "_" + "{0:0>3}".format(state["epoch"]))
+    else:
+        filename = os.path.join(save_model_dest, model_name)
+    torch.save(state, filename + ".tar")
+    if is_best:
+        shutil.copyfile(filename + ".tar", filename + "_opt.tar")
+
+def load_model(filename, model, optimizer):
+    if os.path.isfile(filename):
+        state = torch.load(filename)
+        init_epoch = state["epoch"]
+        model.load_state_dict(state["model"])
+        optimizer.load_state_dict(state['optimizer'])
+        return init_epoch
+    else:
+        print("No model found at \"" + filename + ".\" Starting from scratch...")
