@@ -1,7 +1,4 @@
-import numpy as np
-import math, sys
 import torch.nn as nn
-import torch
 import time
 from torch.autograd import Variable
 import torch.optim as optim
@@ -10,6 +7,9 @@ from lstm_model_utils import *
 from transfer_utils import *
 from meter import *
 from optparse import OptionParser
+from cnn_model import CNN, train, compute
+from utils import *
+import os
 
 # PATHS
 word_embedding_path = "../glove.840B.300d.txt"
@@ -22,176 +22,185 @@ test_pos_data_path = "../Android-master/test.pos.txt"
 test_neg_data_path = "../Android-master/test.neg.txt"
 
 # CONSTANTS
-OUTER_BATCH_SIZE = 25
-HIDDEN_SIZE = 120
+DFT_EMBEDDING_SIZE = 300
+DFT_HIDDEN_SIZE = 667
+DFT_LOSS_MARGIN = 0.1
+DFT_KERNEL_SIZE = 3 # number of words to include in each feature map
+DFT_DROPOUT_PROB = 0.3
+DFT_LEARNING_RATE = 0.0002
 DFT_NUM_EPOCHS = 5
-DFT_LEARNING_RATE = 7e-4
+DFT_BATCH_SIZE = 20
 DFT_PRINT_EPOCHS = 1
+MAX_OR_MEAN_POOL = "MEAN"
 EVAL_BATCH_SIZE = 100
-DEBUG = False
-
-class RNN(nn.Module):
-	def __init__(self, input_size, hidden_size, n_layers, batch_size):
-		super(RNN, self).__init__()
-		self.batch_size = batch_size
-		self.hidden_size = hidden_size
-		self.num_layers = n_layers
-		self.rnn = nn.LSTM(input_size=input_size, hidden_size=hidden_size,
-						  num_layers=n_layers, batch_first=False, dropout=0.1, bidirectional=True)
-		return
-
-	def forward(self, input_tensor, hidden, state):
-		output, hc_n = self.rnn(input_tensor, (hidden, state))
-		h_n, c_n = hc_n[0], hc_n[1]
-		return output
+DEBUG = True
+DFT_SAVE_MODEL_PATH = os.path.join("..", "models", "cnn")
+TRAIN_HYPER_PARAM = True
+SAVE_MODEL = False
 
 
-def mean_pooling(rnn, hidden, state, question_embedding, question_mask, sample):
-	input_minibatch = Variable(torch.functional.stack([question_embedding[s] for s in sample]).permute(1,0,2), requires_grad=True)
-	mask_minibatch = Variable(torch.functional.stack([question_mask[s] for s in sample]).permute(1,0,2), requires_grad=True)
-	output_matrix = rnn(input_minibatch, hidden, state)*mask_minibatch
-	sum_matrix = torch.sum(output_matrix, 0)
-	num_words_matrix = torch.sum(mask_minibatch, 0)
-	return sum_matrix/num_words_matrix
+def train_model(embedding_size, hidden_size, filter_width, max_or_mean, max_num_epochs, batch_size, learning_rate,
+                loss_margin, training_checkpoint, dropout_prob):
+    global load_model_path, train_data, source_questions
+    global dev_pos_data, dev_neg_data, test_pos_data, test_neg_data, target_questions
+
+    # Generate model
+    cnn = CNN(embedding_size, hidden_size, filter_width, max_or_mean, dropout_prob)
+    optimizer = optim.Adam(cnn.parameters(), lr=learning_rate)
+    criterion = nn.MultiMarginLoss(margin=loss_margin)
+    init_epoch = 1
+
+    # Load model
+    if load_model_path is not None:
+        print("Loading model from \"" + load_model_path + "\"...")
+        init_epoch = load_model(load_model_path, cnn, optimizer)
+
+    # Training
+    print("***************************************")
+    print("Starting run with following parameters:")
+    print(" --embedding size:   %d" % (cnn.input_size))
+    print(" --hidden size:      %d" % (cnn.hidden_size))
+    print(" --filter width:     %d" % (cnn.n))
+    print(" --dropout:          %f" % (cnn.dropout_prob))
+    print(" --pooling:          %s" % (cnn.max_or_mean))
+    print(" --initial epoch:    %d" % (init_epoch))
+    print(" --number of epochs: %d" % (max_num_epochs))
+    print(" --batch size:       %d" % (batch_size))
+    print(" --learning rate:    %f" % (learning_rate))
+    print(" --loss margin:      %f" % (loss_margin))
+
+    start = time.time()
+    current_loss = 0
+
+    for iter in range(init_epoch, max_num_epochs + 1):
+        current_loss += train(cnn, criterion, optimizer, train_data, source_questions, batch_size)
+        if iter % training_checkpoint == 0:
+            d_auc = evaluate(cnn, (dev_pos_data, dev_neg_data), target_questions)
+            t_auc = evaluate(cnn, (test_pos_data, test_neg_data), target_questions)
+            print("Epoch %d: Average Train Loss: %.5f, Time: %s" % (
+            iter, (current_loss / training_checkpoint), timeSince(start)))
+            print("Dev AUC(0.05): %.2f" % (d_auc))
+            print("Test AUC(0.05): %.2f" % (t_auc))
+            current_loss = 0
+
+            if SAVE_MODEL:
+                state = {}
+                state["model"] = cnn.state_dict()
+                state["optimizer"] = optimizer.state_dict()
+                state["epoch"] = iter
+                save_model(save_model_path, "cnn", state, iter == max_num_epochs)
+
+    # Compute final results
+    print("-------")
+    print("FINAL RESULTS:")
+    d_auc = evaluate(cnn, (dev_pos_data, dev_neg_data), target_questions)
+    t_auc = evaluate(cnn, (test_pos_data, test_neg_data), target_questions)
+    print("Training time: %s" % (timeSince(start)))
+    print("Dev AUC(0.05): %.2f" % (d_auc))
+    print("Test AUC(0.05): %.2f" % (t_auc))
+
+    if SAVE_MODEL:
+        state = {}
+        state["model"] = cnn.state_dict()
+        state["optimizer"] = optimizer.state_dict()
+        state["epoch"] = max_num_epochs if init_epoch < max_num_epochs else init_epoch
+        save_model(save_model_path, "cnn", state, True)
+
+    return (d_auc, t_auc)
 
 
-def timeSince(since):
-	now = time.time()
-	s = now - since
-	m = math.floor(s / 60)
-	s -= m * 60
-	return '%dm %ds' % (m, s)
+def evaluate_batch(model, emb, mask, sample):
+    encoded_title_matrix = compute(model, emb[0], mask[0], sample, False)
+    encoded_body_matrix = compute(model, emb[1], mask[1], sample, False)
+    encoded_matrix = 0.5 * (encoded_title_matrix + encoded_body_matrix)
+    encoded_matrix = encoded_matrix.squeeze(dim=2)
+    return encoded_matrix
 
 
-def train(rnn, criterion, optimizer, train_data, question_data, hidden_size, num_layers, batch_size):
-	hidden = Variable(torch.zeros(num_layers*2, batch_size, hidden_size))
-	state = Variable(torch.zeros(num_layers*2, batch_size, hidden_size))
-	rnn.zero_grad()
-
-	TITLE_EMB, TITLE_MASK, BODY_EMB, BODY_MASK = question_data
-	num_samples = train_data.size(0)
-		
-	for i in range(num_samples / OUTER_BATCH_SIZE):
-		input_batch = train_data[i*OUTER_BATCH_SIZE:(i+1)*OUTER_BATCH_SIZE]
-		X_scores = []
-
-		for sample in input_batch:
-			encoded_title_matrix = mean_pooling(rnn, hidden, state, TITLE_EMB, TITLE_MASK, sample)
-			encoded_body_matrix = mean_pooling(rnn, hidden, state, BODY_EMB, BODY_MASK, sample)
-			encoded_matrix = (encoded_title_matrix + encoded_body_matrix) / 2.0
-
-			query_matrix = encoded_matrix[0].expand(21,hidden_size*2)
-			candidate_matrix = encoded_matrix[1:]
-			cos = nn.CosineSimilarity(dim=1)(query_matrix, candidate_matrix)
-			X_scores.append(cos)
-
-		X_scores = torch.stack(X_scores)
-		targets = Variable(torch.zeros(X_scores.size(0)).type(torch.LongTensor))
-
-		optimizer.zero_grad()
-		loss = criterion(X_scores, targets)
-		loss.backward()
-		optimizer.step()
-	return loss.data[0]
+def evaluate_data(model, data, emb, mask, meter, pos):
+    query_tensor = data[:,0]
+    candidate_tensor = data[:,1]
+    encoded_queries = evaluate_batch(model, emb, mask, query_tensor)
+    encoded_candidates = evaluate_batch(model, emb, mask, candidate_tensor)
+    scores = nn.CosineSimilarity(dim=1)(encoded_queries, encoded_candidates)
+    print scores.size()
+    if pos:
+        expected = torch.ones(EVAL_BATCH_SIZE).type(torch.LongTensor)
+    else:
+        expected = torch.zeros(EVAL_BATCH_SIZE).type(torch.LongTensor)
+    print expected.size()
+    meter.add(scores.data, expected)
 
 
-def compute_metrics(data):
-	return (MAP(data), MRR(data), precision(data, 1), precision(data, 5))
+def evaluate(model, eval_data, question_data):
+    pos_data, neg_data = eval_data
+    TITLE_EMB, TITLE_MASK, BODY_EMB, BODY_MASK = question_data
+    meter = AUCMeter()
 
+    # Evaluate positive data
+    evaluate_data(model, pos_data, (TITLE_EMB, BODY_EMB), (TITLE_MASK, BODY_MASK), meter, True)
 
-def evaluate_batch(rnn, hidden, state, emb, mask, sample):
-	encoded_title_matrix = mean_pooling(rnn, hidden, state, emb[0], mask[0], sample)
-	encoded_body_matrix = mean_pooling(rnn, hidden, state, emb[1], mask[1], sample)
-	encoded_matrix = (encoded_title_matrix + encoded_body_matrix) / 2.0
-	return encoded_matrix
+    # Evaluate negative data
+    for i in range(neg_data.size(0) / EVAL_BATCH_SIZE):
+        input_data = neg_data[i*EVAL_BATCH_SIZE:(i+1)*EVAL_BATCH_SIZE]
+        evaluate_data(model, input_data, (TITLE_EMB, BODY_EMB), (TITLE_MASK, BODY_MASK), meter, False)
 
-
-def evaluate_data(rnn, data, emb, mask, hidden_size, num_layers, meter, pos):
-	batch_size = data.size(0)
-	hidden = Variable(torch.zeros(num_layers*2, batch_size, hidden_size))
-	state = Variable(torch.zeros(num_layers*2, batch_size, hidden_size))
-
-	query_tensor = data[:,0]
-	candidate_tensor = data[:,1]
-	encoded_queries = evaluate_batch(rnn, hidden, state, emb, mask, query_tensor)
-	encoded_candidates = evaluate_batch(rnn, hidden, state, emb, mask, candidate_tensor)
-	scores = nn.CosineSimilarity(dim=1)(encoded_queries, encoded_candidates)
-	if pos:
-		expected = torch.ones(batch_size).type(torch.LongTensor)
-	else:
-		expected = torch.zeros(batch_size).type(torch.LongTensor)
-	meter.add(scores.data, expected)
-
-
-def evaluate(rnn, eval_data, question_data, hidden_size, num_layers):
-	pos_data, neg_data = eval_data
-	TITLE_EMB, TITLE_MASK, BODY_EMB, BODY_MASK = question_data
-	meter = AUCMeter()
-
-	# Evaluate positive data
-	evaluate_data(rnn, pos_data, (TITLE_EMB, BODY_EMB), (TITLE_MASK, BODY_MASK), hidden_size, num_layers, meter, True)
-
-	# Evaluate negative data
-	for i in range(neg_data.size(0) / EVAL_BATCH_SIZE):
-		input_data = neg_data[i*EVAL_BATCH_SIZE:(i+1)*EVAL_BATCH_SIZE]
-		evaluate_data(rnn, input_data, (TITLE_EMB, BODY_EMB), (TITLE_MASK, BODY_MASK), hidden_size, num_layers, meter, False)
-
-	score = meter.value(max_fpr=0.05)
-	return score
+    score = meter.value(max_fpr=0.05)
+    return score
 
 
 if __name__ == '__main__':
-	# Create parser and extract arguments
-	parser = OptionParser()
-	parser.add_option("--batch_size", dest="batch_size", default=str(OUTER_BATCH_SIZE))
-	parser.add_option("--hidden_size", dest="hidden_size", default=str(HIDDEN_SIZE))
-	parser.add_option("--num_epochs", dest="num_epochs", default=str(DFT_NUM_EPOCHS))
-	parser.add_option("--learning_rate", dest="learning_rate", default=str(DFT_LEARNING_RATE))
-	parser.add_option("--print_epochs", dest="print_epochs", default=str(DFT_PRINT_EPOCHS))
-	opts,args = parser.parse_args()
+    # Create parser and extract arguments
+    parser = OptionParser()
+    parser.add_option("--batch_size", dest="batch_size", default=str(DFT_BATCH_SIZE))
+    parser.add_option("--hidden_size", dest="hidden_size", default=str(DFT_HIDDEN_SIZE))
+    parser.add_option("--num_epochs", dest="num_epochs", default=str(DFT_NUM_EPOCHS))
+    parser.add_option("--learning_rate", dest="learning_rate", default=str(DFT_LEARNING_RATE))
+    parser.add_option("--filter_width", dest="filter_width", default=str(DFT_KERNEL_SIZE))
+    parser.add_option("--loss_margin", dest="loss_margin", default=str(DFT_LOSS_MARGIN))
+    parser.add_option("--dropout", dest="dropout_prob", default=str(DFT_DROPOUT_PROB))
+    parser.add_option("--max_or_mean", dest="max_or_mean", default=MAX_OR_MEAN_POOL)
+    parser.add_option("--print_epochs", dest="print_epochs", default=str(DFT_PRINT_EPOCHS))
+    parser.add_option("--load_model", dest="load_model_path", default=None)
+    parser.add_option("--save_model", dest="save_model_path", default=DFT_SAVE_MODEL_PATH)
+    opts, args = parser.parse_args()
 
-	# Set parameters
-	n_layers = 1
-	n_features = 300
-	outer_batch_size = int(opts.batch_size)
-	hidden_size = int(opts.hidden_size)
-	learning_rate = float(opts.learning_rate)
-	n_epochs = int(opts.num_epochs)
-	print_every = int(opts.print_epochs)
+    # Set parameters
+    batch_size = int(opts.batch_size)
+    hidden_size = int(opts.hidden_size)
+    learning_rate = float(opts.learning_rate)
+    max_num_epochs = int(opts.num_epochs)
+    training_checkpoint = int(opts.print_epochs)
+    load_model_path = opts.load_model_path
+    save_model_path = opts.save_model_path
+    filter_width = int(opts.filter_width)
+    loss_margin = float(opts.loss_margin)
+    dropout_prob = float(opts.dropout_prob)
+    max_or_mean = opts.max_or_mean
 
-	# Load data
-	print("LOADING DATA...")
-	embedding = create_embedding_dict(word_embedding_path, True)
-	source_questions = create_question_dict(ubuntu_question_path, embedding, hidden_size)
-	target_questions = create_question_dict(android_question_path, embedding, hidden_size)
-	train_data = read_training_data(train_data_path)
-	dev_pos_data = read_android_eval_data(dev_pos_data_path)
-	dev_neg_data = read_android_eval_data(dev_neg_data_path)
-	test_pos_data = read_android_eval_data(test_pos_data_path)
-	test_neg_data = read_android_eval_data(test_neg_data_path)
+    # Load data
+    print("LOADING DATA...")
+    embedding = create_embedding_dict(word_embedding_path, True)
+    source_questions = create_question_dict("CNN", ubuntu_question_path, embedding, hidden_size, embedding_size=DFT_EMBEDDING_SIZE)
+    target_questions = create_question_dict("CNN", android_question_path, embedding, hidden_size, embedding_size=DFT_EMBEDDING_SIZE)
+    train_data = read_training_data(train_data_path)
+    dev_pos_data = read_android_eval_data(dev_pos_data_path)
+    dev_neg_data = read_android_eval_data(dev_neg_data_path)
+    test_pos_data = read_android_eval_data(test_pos_data_path)
+    test_neg_data = read_android_eval_data(test_neg_data_path)
+    
+    if DEBUG:
+        train_data = train_data[:300]  # ONLY FOR DEBUGGING, REMOVE LINE TO RUN ON ALL TRAINING DATA
 
-	if DEBUG:
-		train_data = train_data[:300]  # ONLY FOR DEBUGGING, REMOVE LINE TO RUN ON ALL TRAINING DATA
+    train_model(DFT_EMBEDDING_SIZE,
+                hidden_size,
+                filter_width,
+                max_or_mean,
+                max_num_epochs,
+                batch_size,
+                learning_rate,
+                loss_margin,
+                training_checkpoint,
+                dropout_prob)
 
-	# Create model
-	rnn = RNN(n_features, hidden_size, n_layers, batch_size=22)
-	optimizer = optim.Adam(rnn.parameters(), lr=learning_rate)
-	criterion = nn.MultiMarginLoss(margin=0.2)
-
-	# Training
-	print("Starting run with batch_size: %d, hidden size: %d, learning rate: %.4f"%(outer_batch_size, hidden_size, learning_rate))
-	start = time.time()
-	current_loss = 0
-
-	for iter in range(1, n_epochs + 1):
-		avg_loss = train(rnn, criterion, optimizer, train_data, source_questions, hidden_size, n_layers, batch_size=22)
-		current_loss += avg_loss
-
-		if iter % print_every == 0:
-			d_auc = evaluate(rnn, (dev_pos_data, dev_neg_data), target_questions, hidden_size, n_layers)
-			t_auc = evaluate(rnn, (test_pos_data, test_neg_data), target_questions, hidden_size, n_layers)
-			print("Epoch %d: Average Train Loss: %.5f, Time: %s"%(iter, (current_loss / print_every), timeSince(start)))
-			print("Dev AUC(0.05): %.2f"%(d_auc))
-			print("Test AUC(0.05): %.2f"%(t_auc))
-			current_loss = 0
-	
+    

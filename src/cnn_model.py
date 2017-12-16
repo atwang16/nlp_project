@@ -9,30 +9,30 @@ import os
 import sys
 
 # PATHS
-word_embedding_path = "../askubuntu/vector/vectors_stackexchange.txt.gz"
-question_path = "../askubuntu/text_tokenized.txt.gz"
-train_data_path = "../askubuntu/train_random.txt"
-dev_data_path = "../askubuntu/dev.txt"
-test_data_path = "../askubuntu/test.txt"
+word_embedding_path = "../askubuntu-master/vector/vectors_stackexchange.txt.gz"
+question_path = "../askubuntu-master/text_tokenized.txt.gz"
+train_data_path = "../askubuntu-master/train_random.txt"
+dev_data_path = "../askubuntu-master/dev.txt"
+test_data_path = "../askubuntu-master/test.txt"
 
 # CONSTANTS
 DFT_EMBEDDING_SIZE = 200
 DFT_HIDDEN_SIZE = 667
-DFT_LOSS_MARGIN = 0.2
+DFT_LOSS_MARGIN = 0.1
 DFT_KERNEL_SIZE = 3 # number of words to include in each feature map
-DFT_DROPOUT_PROB = 0.1
-DFT_LEARNING_RATE = 0.0001
-DFT_NUM_EPOCHS = 5
+DFT_DROPOUT_PROB = 0.25
+DFT_LEARNING_RATE = 0.0002
+DFT_NUM_EPOCHS = 10
 DFT_BATCH_SIZE = 20
 DFT_PRINT_EPOCHS = 1
 MAX_OR_MEAN_POOL = "MEAN"
-DEBUG = True
+DEBUG = False
 DFT_SAVE_MODEL_PATH = os.path.join("..", "models", "cnn")
-TRAIN_HYPER_PARAM = True
-SAVE_MODEL = False
+TRAIN_HYPER_PARAM = False
+SAVE_MODEL = True
 
 # HYPERPARAMETER TESTING
-hidden_size_arr = [667, 333]
+hidden_size_arr = [333]
 filter_width_arr = [2, 3, 4]
 loss_margin_arr = [0.1, 0.2, 0.4]
 dropout_prob_arr = [0.1, 0.2, 0.3]
@@ -46,9 +46,9 @@ class Logger(object):
     """
     Stack Overflow Logger class: https://stackoverflow.com/questions/14906764/how-to-redirect-stdout-to-both-file-and-console-with-scripting
     """
-    def __init__(self):
+    def __init__(self, filename):
         self.terminal = sys.stdout
-        self.log = open("logfile.log", "a")
+        self.log = open(filename, "a")
 
     def write(self, message):
         self.terminal.write(message)
@@ -60,7 +60,7 @@ class Logger(object):
         #you might want to specify some extra behavior here.
         pass
 
-sys.stdout = Logger()
+sys.stdout = Logger("../models/cnn/cnn_results.txt")
 
 class CNN(nn.Module):
 
@@ -99,14 +99,6 @@ class CNN(nn.Module):
             out = out.unsqueeze(2)
             # print out.size()
         return out
-
-
-def timeSince(since):
-    now = time.time()
-    s = now - since
-    m = math.floor(s / 60)
-    s -= m * 60
-    return '%dm %ds' % (m, s)
 
 
 def compute(model, question_embedding, question_mask, sample, is_training):
@@ -288,7 +280,7 @@ if __name__ == '__main__':
     # Load data
     print("LOADING DATA...")
     embedding_dict = create_embedding_dict(word_embedding_path)
-    questions = create_question_dict("CNN", question_path, embedding_dict, DFT_HIDDEN_SIZE, init_padding=filter_width - 1)
+    questions = create_question_dict("CNN", question_path, embedding_dict, hidden_size, init_padding=filter_width - 1)
     train_data = read_training_data(train_data_path)
     dev_data, dev_label_dict, dev_scores = read_eval_data(dev_data_path)
     test_data, test_label_dict, test_scores = read_eval_data(test_data_path)

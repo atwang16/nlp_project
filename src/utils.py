@@ -4,9 +4,11 @@ import pdb
 import gzip
 import shutil
 import os
+import time
+import math
 
 # maps word to embedding tensor
-def create_embedding_dict(filename):
+def create_embedding_dict(filename, glove=False):
     """
     Creates dictionary which maps words in file to their corresponding embeddings in the file.
 
@@ -14,13 +16,15 @@ def create_embedding_dict(filename):
     :return: Dictionary of words to float Tensor variables
     """
     word_to_embedding = {}
-    f = gzip.open(filename, 'r')
+    if glove:
+        f = open(filename, 'r')
+    else:
+        f = gzip.open(filename, 'r')
     for l in f.readlines():
         line = l.split()
         word = line[0]
         embedding = torch.Tensor([float(v) for v in line[1:]])
         word_to_embedding[word] = embedding
-    f.close()
     return word_to_embedding
 
 
@@ -194,3 +198,20 @@ def load_model(filename, model, optimizer):
         return init_epoch
     else:
         print("No model found at \"" + filename + ".\" Starting from scratch...")
+
+def read_android_eval_data(filename):
+    eval_matrix = []
+    f = open(filename, 'r')
+    for line in f.readlines():
+        candidates = [int(v) for v in line.split()]
+        eval_matrix.append(torch.Tensor(candidates))
+
+    eval_tensor = torch.functional.stack(eval_matrix)
+    return eval_tensor
+
+def timeSince(since):
+    now = time.time()
+    s = now - since
+    m = math.floor(s / 60)
+    s -= m * 60
+    return '%dm %ds' % (m, s)
