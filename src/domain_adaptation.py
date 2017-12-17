@@ -1,6 +1,7 @@
 import time
 import math
 from torch.autograd import Variable
+import torch.nn.functional as F
 import torch.optim as optim
 import torch.nn as nn
 from optparse import OptionParser
@@ -9,11 +10,16 @@ import os
 import sys
 
 # PATHS
-word_embedding_path = "../askubuntu/vector/vectors_pruned.200.txt.gz"
-question_path = "../askubuntu/text_tokenized.txt.gz"
-train_data_path = "../askubuntu/train_random.txt"
-dev_data_path = "../askubuntu/dev.txt"
-test_data_path = "../askubuntu/test.txt"
+word_embedding_path = "../glove.840B.300d.txt"
+ubuntu_question_path = "../askubuntu-master/text_tokenized.txt.gz"
+train_data_path = "../askubuntu-master/train_random.txt"
+dev_data_path = "../askubuntu-master/dev.txt"
+test_data_path = "../askubuntu-master/test.txt"
+android_question_path = "../Android-master/corpus.tsv.gz"
+dev_pos_data_path = "../Android-master/dev.pos.txt"
+dev_neg_data_path = "../Android-master/dev.neg.txt"
+test_pos_data_path = "../Android-master/test.pos.txt"
+test_neg_data_path = "../Android-master/test.neg.txt"
 
 # CONSTANTS
 DFT_LAMBDA = 1e-4
@@ -106,17 +112,17 @@ class CNN(nn.Module):
 
 
 class FFN(nn.Module):
-    def __init__(self, embed_dim, hidden_dim):
+    def __init__(self, input_dim):
         super(NN, self).__init__()
-        self.W_hidden = nn.Linear(embed_dim, hidden_dim)
-        self.W_out = nn.Linear(hidden_dim, 2)
+        self.W_hidden_1 = nn.Linear(input_dim, 300)
+        self.W_hidden_2 = nn.Linear(300, 150)
+        self.W_out = nn.Linear(150, 2)
         self.softmax = nn.LogSoftmax()
 
     def forward(self, input):
-        #TODO: recommended structure --> h->300->150->2 (with Relu activation in between)
-        hidden = F.tanh(self.W_hidden(input))
-        output = self.W_out(hidden)
-        out = self.softmax(output)
+        hidden_1 = F.relu(self.W_hidden_1(input))
+        hidden_2 = F.relu(self.W_hidden_1(hidden_1))
+        out = self.softmax(self.W_out(hidden_2))
         return out
 
 
@@ -199,7 +205,7 @@ def train_model(lambda_val, embedding_size, hidden_size, filter_width, max_or_me
     cnn = CNN(embedding_size, hidden_size, filter_width, max_or_mean, dropout_prob)
     optimizer_1 = optim.Adam(cnn.parameters(), lr=learning_rate_1)
     criterion_1 = nn.MultiMarginLoss(margin=loss_margin)
-    ffn = FFN() #TODO
+    ffn = FFN(hidden_size)
     optimizer_2 = optim.Adam(ffn.parameters(), lr=learning_rate_2)
     criterion_2 = nn.functional.cross_entropy()
     init_epoch = 1
