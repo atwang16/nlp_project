@@ -113,31 +113,6 @@ def read_training_data(filename):
     return train_id_tensor
 
 
-# def read_training_data_for_transfer(filename):
-#     train_matrix = []
-#     question_set = set()
-#     f = open(filename, 'r')
-#     for l in f.readlines():
-#         line = l.split('\t')
-#         query, positives, negatives = line
-
-#         question_set.add(int(query))
-#         question_set = question_set.union(set([int(id) for id in negatives.split()]))
-
-#         for pos in positives.split():
-#             question_set.add(int(pos))
-            
-#             twenty_neg = np.take([int(id) for id in negatives.split()], np.random.choice(100, 20, replace=False))
-#             ids = np.concatenate(([int(query), int(pos)], twenty_neg))
-
-#             sample_id_tensor = torch.Tensor(ids)
-#             train_matrix.append(sample_id_tensor)
-
-#     train_id_tensor = torch.functional.stack(train_matrix)
-#     f.close()
-#     return train_id_tensor, question_set
-
-
 # reads eval input data and creates:
 # 1) eval matrix, each row with 1 query, 20 candidate questions
 # 2) label dict, maps query id to candidate labels (1 for positive, 0 for negative)
@@ -233,18 +208,6 @@ def read_android_eval_data(filename):
 
     eval_tensor = torch.functional.stack(eval_matrix)
     return eval_tensor
-
-# def read_android_eval_data_for_transfer(filename):
-#     eval_matrix = []
-#     question_set = set()
-#     f = open(filename, 'r')
-#     for line in f.readlines():
-#         candidates = [int(v) for v in line.split()]
-#         eval_matrix.append(torch.Tensor(candidates))
-#         question_set = question_set.union(set(candidates))
-
-#     eval_tensor = torch.functional.stack(eval_matrix)
-#     return eval_tensor, question_set
 
 def timeSince(since):
     now = time.time()
