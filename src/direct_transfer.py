@@ -32,14 +32,13 @@ DFT_BATCH_SIZE = 20
 DFT_PRINT_EPOCHS = 1
 MAX_OR_MEAN_POOL = "MEAN"
 DFT_EVAL_BATCH_SIZE = 200
+
+# CONTROL PROGRAM OUTPUT
 DEBUG = False
 DFT_SAVE_MODEL_PATH = os.path.join("..", "models", "cnn")
 TRAIN_HYPER_PARAM = False
-<<<<<<< HEAD
-SAVE_MODEL = True
-=======
 SAVE_MODEL = False
->>>>>>> cc9b71c6e7ebc02dbb272215471663642eda251b
+LOG_IN_TEXT_FILE = False
 
 #HYPERPARAMETER TESTING
 hidden_size_arr = [900]
@@ -69,7 +68,10 @@ class Logger(object):
         #you might want to specify some extra behavior here.
         pass
 
-sys.stdout = Logger("../models/cnn/direct_transfer_results.txt")
+if LOG_IN_TEXT_FILE:
+    if not os.path.isdir(os.path.join("..", "models", "cnn")):
+        os.mkdir(os.path.join("..", "models", "cnn"))
+    sys.stdout = Logger("../models/cnn/direct_transfer_results.txt")
 
 
 def train_model(embedding_size, hidden_size, filter_width, max_or_mean, max_num_epochs, batch_size, learning_rate,
@@ -111,8 +113,8 @@ def train_model(embedding_size, hidden_size, filter_width, max_or_mean, max_num_
         if iter % training_checkpoint == 0:
             print("Epoch %d: Average Train Loss: %.5f, Time: %s" % (
                 iter, (current_loss / training_checkpoint), timeSince(start)))
-            d_auc = evaluate_auc(cnn, dev_pos_data, dev_neg_data[:10000], target_questions, eval_batch_size)
-            t_auc = evaluate_auc(cnn, test_pos_data, test_neg_data[:10000], target_questions, eval_batch_size)
+            d_auc = evaluate_auc(cnn, dev_pos_data, dev_neg_data, target_questions, eval_batch_size)
+            t_auc = evaluate_auc(cnn, test_pos_data, test_neg_data, target_questions, eval_batch_size)
             print("Dev AUC(0.05): %.2f" % (d_auc))
             print("Test AUC(0.05): %.2f" % (t_auc))
 
@@ -222,17 +224,12 @@ if __name__ == '__main__':
     test_pos_data = read_android_eval_data(test_pos_data_path)
     test_neg_data = read_android_eval_data(test_neg_data_path)
 
-    train_data = train_data[:3000]
-
     if DEBUG:
         train_data = train_data[:8000]  # ONLY FOR DEBUGGING, REMOVE LINE TO RUN ON ALL TRAINING DATA
         dev_neg_data = dev_neg_data[:20000]
         test_neg_data = dev_neg_data[:20000]
 
     if TRAIN_HYPER_PARAM:
-        i = 1
-        total = len(hidden_size_arr) * len(filter_width_arr) * len(loss_margin_arr) * len(learning_rate_arr) * \
-                len(batch_size_arr) * len(max_mean_arr) * len(dropout_prob_arr)
         for hs in hidden_size_arr:
             for fw in filter_width_arr:
                 for lm in loss_margin_arr:
@@ -251,8 +248,6 @@ if __name__ == '__main__':
                                                 training_checkpoint,
                                                 dp,
                                                 eval_batch_size)
-                                    print "Model " + str(i) + "/" + str(total)
-                                    i += 1
 
     else:
         train_model(DFT_EMBEDDING_SIZE,

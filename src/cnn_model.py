@@ -1,5 +1,3 @@
-import time
-import math
 from torch.autograd import Variable
 import torch.optim as optim
 import torch.nn as nn
@@ -26,10 +24,13 @@ DFT_NUM_EPOCHS = 10
 DFT_BATCH_SIZE = 20
 DFT_PRINT_EPOCHS = 1
 MAX_OR_MEAN_POOL = "MEAN"
+
+# CONTROL PROGRAM OUTPUT
 DEBUG = False
 DFT_SAVE_MODEL_PATH = os.path.join("..", "models", "cnn")
 TRAIN_HYPER_PARAM = False
-SAVE_MODEL = True
+SAVE_MODEL = False
+LOG_IN_TEXT_FILE = False
 
 # HYPERPARAMETER TESTING
 hidden_size_arr = [667, 333]
@@ -39,8 +40,6 @@ dropout_prob_arr = [0.1, 0.2, 0.3]
 learning_rate_arr = [0.0002]
 batch_size_arr = [20]
 max_mean_arr = ["MAX", "MEAN"]
-opt_model_params = {}
-opt_mrr = (0.0, 0.0)
 
 class Logger(object):
     """
@@ -60,7 +59,10 @@ class Logger(object):
         #you might want to specify some extra behavior here.
         pass
 
-sys.stdout = Logger("../models/cnn/cnn_results.txt")
+if LOG_IN_TEXT_FILE:
+    if not os.path.isdir(os.path.join("..", "models", "cnn")):
+        os.mkdir(os.path.join("..", "models", "cnn"))
+    sys.stdout = Logger("../models/cnn/cnn_results.txt")
 
 class CNN(nn.Module):
 
@@ -91,13 +93,9 @@ class CNN(nn.Module):
         else:
             mask_trimmed = mask.narrow(2, 0, out.size(2))
             out = out * mask_trimmed
-            # out = nn.AvgPool1d(input.size()[2] - self.n + 1)(out)
-            # print out.size()
             out = torch.sum(out, 2)
-            # print out.size()
             out = out / torch.sum(mask_trimmed, 2)
             out = out.unsqueeze(2)
-            # print out.size()
         return out
 
 
@@ -162,7 +160,7 @@ def train(model, criterion, optimizer, train_data, question_data, batch_size, nu
 def train_model(embedding_size, hidden_size, filter_width, max_or_mean, max_num_epochs, batch_size, learning_rate,
                 loss_margin, training_checkpoint, dropout_prob):
     global load_model_path, train_data, questions
-    global dev_data, dev_label_dict, test_data, test_label_dict, opt_mrr, opt_model_params
+    global dev_data, dev_label_dict, test_data, test_label_dict
 
     # Generate model
     cnn = CNN(embedding_size, hidden_size, filter_width, max_or_mean, dropout_prob)
@@ -213,7 +211,7 @@ def train_model(embedding_size, hidden_size, filter_width, max_or_mean, max_num_
                 save_model(save_model_path, "cnn", state, iter == max_num_epochs)
 
     # Compute final results
-    print("-------")
+    print("--------------")
     print("FINAL RESULTS:")
     d_MAP, d_MRR, d_P_1, d_P_5 = evaluate(cnn, dev_data, dev_label_dict, questions)
     t_MAP, t_MRR, t_P_1, t_P_5 = evaluate(cnn, test_data, test_label_dict, questions)
@@ -229,18 +227,6 @@ def train_model(embedding_size, hidden_size, filter_width, max_or_mean, max_num_
         state["optimizer"] = optimizer.state_dict()
         state["epoch"] = max_num_epochs if init_epoch < max_num_epochs else init_epoch
         save_model(save_model_path, "cnn", state, True)
-
-    if TRAIN_HYPER_PARAM and d_MRR > opt_mrr[0]:
-        opt_mrr = d_MRR, t_MRR
-        opt_model_params = {"embedding_size": cnn.input_size,
-                            "hidden_size": cnn.hidden_size,
-                            "filter_width": cnn.n,
-                            "dropout_prob": cnn.dropout_prob,
-                            "pooling": cnn.max_or_mean,
-                            "number of epochs": max_num_epochs,
-                            "batch size": batch_size,
-                            "learning rate": learning_rate,
-                            "loss margin": loss_margin}
 
     return (d_MAP, d_MRR, d_P_1, d_P_5)
 
@@ -286,6 +272,10 @@ if __name__ == '__main__':
     dropout_prob = float(opts.dropout_prob)
     max_or_mean = opts.max_or_mean
 
+    cnn = CNN(DFT_EMBEDDING_SIZE, hidden_size, filter_width, max_or_mean, dropout_prob)
+    for p in cnn.parameters():
+        print p.size()
+
     # Load data
     print("LOADING DATA...")
     embedding_dict = create_embedding_dict(word_embedding_path)
@@ -298,9 +288,6 @@ if __name__ == '__main__':
         train_data = train_data[:300]  # ONLY FOR DEBUGGING, REMOVE LINE TO RUN ON ALL TRAINING DATA
 
     if TRAIN_HYPER_PARAM:
-        i = 1
-        total = len(hidden_size_arr) * len(filter_width_arr) * len(loss_margin_arr) * len(learning_rate_arr) * \
-                len(batch_size_arr) * len(max_mean_arr) * len(dropout_prob_arr)
         for hs in hidden_size_arr:
             for fw in filter_width_arr:
                 for lm in loss_margin_arr:
@@ -318,12 +305,6 @@ if __name__ == '__main__':
                                                 lm,
                                                 training_checkpoint,
                                                 dp)
-                                    print "Model " + str(i) + "/" + str(total)
-                                    i += 1
-        print("-------------")
-        print("OPTIMAL MODEL:")
-        print opt_mrr
-        print opt_model_params
 
     else:
         train_model(DFT_EMBEDDING_SIZE,
@@ -336,7 +317,3 @@ if __name__ == '__main__':
                     loss_margin,
                     training_checkpoint,
                     dropout_prob)
-
-
-# TODO: retrain hyperparameters
-# TODO: consolidate utils files

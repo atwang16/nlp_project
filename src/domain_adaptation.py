@@ -1,11 +1,8 @@
-import time
-import math
 from torch.autograd import Variable
 import torch.nn.functional as F
 import torch.optim as optim
 import torch.nn as nn
 from optparse import OptionParser
-from cnn_model import evaluate
 from utils import *
 import os
 import sys
@@ -55,10 +52,12 @@ DFT_BATCH_SIZE = 20
 DFT_PRINT_EPOCHS = 1
 MAX_OR_MEAN_POOL = "MEAN"
 DFT_EVAL_BATCH_SIZE = 200
+
+# CONTROL PROGRAM OUTPUT
 DEBUG = False
 DFT_SAVE_MODEL_PATH = os.path.join("..", "models", "cnn")
 TRAIN_HYPER_PARAM = False
-SAVE_MODEL = False
+LOG_IN_TEXT_FILE = False
 
 # HYPERPARAMETER TESTING
 lambda_arr = [1e-3, 1e-5, 1e-7]
@@ -77,9 +76,9 @@ class Logger(object):
     """
     Stack Overflow Logger class: https://stackoverflow.com/questions/14906764/how-to-redirect-stdout-to-both-file-and-console-with-scripting
     """
-    def __init__(self):
+    def __init__(self, filename):
         self.terminal = sys.stdout
-        self.log = open("logfile.log", "a")
+        self.log = open(filename, "a")
 
     def write(self, message):
         self.terminal.write(message)
@@ -91,7 +90,10 @@ class Logger(object):
         #you might want to specify some extra behavior here.
         pass
 
-sys.stdout = Logger()
+if LOG_IN_TEXT_FILE:
+    if not os.path.isdir(os.path.join("..", "models", "cnn")):
+        os.mkdir(os.path.join("..", "models", "cnn"))
+    sys.stdout = Logger("../models/cnn/domain_adaptation_results.txt")
 
 class CNN(nn.Module):
 
@@ -122,13 +124,9 @@ class CNN(nn.Module):
         else:
             mask_trimmed = mask.narrow(2, 0, out.size(2))
             out = out * mask_trimmed
-            # out = nn.AvgPool1d(input.size()[2] - self.n + 1)(out)
-            # print out.size()
             out = torch.sum(out, 2)
-            # print out.size()
             out = out / torch.sum(mask_trimmed, 2)
             out = out.unsqueeze(2)
-            # print out.size()
         return out
 
 
@@ -243,11 +241,6 @@ def train_model(lambda_val, embedding_size, hidden_size, filter_width, max_or_me
     criterion_2 = nn.functional.cross_entropy
     init_epoch = 1
 
-    # # Load model
-    # if load_model_path is not None:
-    #     print("Loading model from \"" + load_model_path + "\"...")
-    #     init_epoch = load_model(load_model_path, cnn, optimizer)
-
     # Training
     print("***************************************")
     print("Starting run with following parameters:")
@@ -270,26 +263,13 @@ def train_model(lambda_val, embedding_size, hidden_size, filter_width, max_or_me
     for iter in range(init_epoch, max_num_epochs + 1):
         current_loss += train(cnn, ffn, criterion_1, criterion_2, optimizer_1, optimizer_2, train_data_ubuntu_1, (train_data_ubuntu_2, train_data_android_2), (source_questions, target_questions), batch_size, lambda_val)
         if iter % training_checkpoint == 0:
-            # d_MAP, d_MRR, d_P_1, d_P_5 = evaluate(cnn, dev_data, dev_label_dict, source_questions)
-            # t_MAP, t_MRR, t_P_1, t_P_5 = evaluate(cnn, test_data, test_label_dict, source_questions)
             print("Epoch %d: Average Train Loss: %.5f, Time: %s" % (
             iter, (current_loss / training_checkpoint), timeSince(start)))
-            # print("Dev MAP: %.1f, MRR: %.1f, P@1: %.1f, P@5: %.1f" % (
-            # d_MAP * 100, d_MRR * 100, d_P_1 * 100, d_P_5 * 100))
-            # print("Test MAP: %.1f, MRR: %.1f, P@1: %.1f, P@5: %.1f" % (
-            # t_MAP * 100, t_MRR * 100, t_P_1 * 100, t_P_5 * 100))
-            d_auc = evaluate_auc(cnn, dev_pos_data, dev_neg_data[:10000], target_questions, eval_batch_size)
-            t_auc = evaluate_auc(cnn, test_pos_data, test_neg_data[:10000], target_questions, eval_batch_size)
+            d_auc = evaluate_auc(cnn, dev_pos_data, dev_neg_data, target_questions, eval_batch_size)
+            t_auc = evaluate_auc(cnn, test_pos_data, test_neg_data, target_questions, eval_batch_size)
             print("Dev AUC(0.05): %.2f" % (d_auc))
             print("Test AUC(0.05): %.2f" % (t_auc))
             current_loss = 0
-
-            # if SAVE_MODEL:
-            #     state = {}
-            #     state["model"] = cnn.state_dict()
-            #     state["optimizer"] = optimizer.state_dict()
-            #     state["epoch"] = iter
-            #     save_model(save_model_path, "cnn", state, iter == max_num_epochs)
 
     # Compute final results
     print("-------")
@@ -299,13 +279,6 @@ def train_model(lambda_val, embedding_size, hidden_size, filter_width, max_or_me
     print("Training time: %s" % (timeSince(start)))
     print("Dev AUC(0.05): %.2f" % (d_auc))
     print("Test AUC(0.05): %.2f" % (t_auc))
-
-    # if SAVE_MODEL:
-    #     state = {}
-    #     state["model"] = cnn.state_dict()
-    #     state["optimizer"] = optimizer.state_dict()
-    #     state["epoch"] = max_num_epochs if init_epoch < max_num_epochs else init_epoch
-    #     save_model(save_model_path, "cnn", state, True)
 
     return (d_auc, t_auc)
 
@@ -394,21 +367,12 @@ if __name__ == '__main__':
     test_pos_data = read_android_eval_data(test_pos_data_path)
     test_neg_data = read_android_eval_data(test_neg_data_path)
 
-    train_data_ubuntu_1 = train_data_ubuntu_1[:5000] # for speed
-    dev_neg_data = dev_neg_data[:50000]
-    test_neg_data = test_neg_data[:50000]
-
     if DEBUG:
         train_data_ubuntu_1 = train_data_ubuntu_1[:300]  # ONLY FOR DEBUGGING, REMOVE LINE TO RUN ON ALL TRAINING DATA
-        # train_data_ubuntu_2 = train_data_ubuntu_2[:300]
-        # train_data_android_2 = train_data_android_2[:300]
         dev_neg_data = dev_neg_data[:10000]
         test_neg_data = test_neg_data[:10000]
 
     if TRAIN_HYPER_PARAM:
-        i = 1
-        total = len(lambda_arr) * len(hidden_size_arr) * len(filter_width_arr) * len(loss_margin_arr) * len(learning_rate_arr_1) * \
-                len(learning_rate_arr_2) * len(batch_size_arr) * len(max_mean_arr) * len(dropout_prob_arr)
         for l in lambda_arr:
             for hs in hidden_size_arr:
                 for fw in filter_width_arr:
@@ -431,8 +395,6 @@ if __name__ == '__main__':
                                                         training_checkpoint,
                                                         dp,
                                                         eval_batch_size)
-                                            print "Model " + str(i) + "/" + str(total)
-                                            i += 1
         print("-------------")
         print("OPTIMAL MODEL:")
         print opt_mrr
@@ -452,7 +414,3 @@ if __name__ == '__main__':
                     training_checkpoint,
                     dropout_prob,
                     eval_batch_size)
-
-
-# TODO: retrain hyperparameters
-# TODO: consolidate utils files

@@ -8,11 +8,11 @@ from meter import AUCMeter
 import torch
 
 # PATHS
-CORPUS_PATH = "../Android/corpus.tsv.gz"
-DEV_POS_PATH = "../Android/dev.pos.txt"
-DEV_NEG_PATH = "../Android/dev.neg.txt"
-TEST_POS_PATH = "../Android/test.pos.txt"
-TEST_NEG_PATH = "../Android/test.neg.txt"
+CORPUS_PATH = "../Android-master/corpus.tsv.gz"
+DEV_POS_PATH = "../Android-master/dev.pos.txt"
+DEV_NEG_PATH = "../Android-master/dev.neg.txt"
+TEST_POS_PATH = "../Android-master/test.pos.txt"
+TEST_NEG_PATH = "../Android-master/test.neg.txt"
 
 def read_raw_data(filename):
     question_to_index = {}
