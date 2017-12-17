@@ -42,6 +42,24 @@ DFT_SAVE_MODEL_PATH = os.path.join("..", "models", "cnn")
 TRAIN_HYPER_PARAM = False
 SAVE_MODEL = False
 
+# DFT_LAMBDA = 1e-7
+# DFT_EMBEDDING_SIZE = 300
+# DFT_HIDDEN_SIZE = 900
+# DFT_LOSS_MARGIN = 0.2
+# DFT_KERNEL_SIZE = 3 # number of words to include in each feature map
+# DFT_DROPOUT_PROB = 0.3
+# DFT_LEARNING_RATE_1 = 0.0002
+# DFT_LEARNING_RATE_2 = -0.0002
+# DFT_NUM_EPOCHS = 5
+# DFT_BATCH_SIZE = 20
+# DFT_PRINT_EPOCHS = 1
+# MAX_OR_MEAN_POOL = "MEAN"
+# DFT_EVAL_BATCH_SIZE = 200
+# DEBUG = False
+# DFT_SAVE_MODEL_PATH = os.path.join("..", "models", "cnn")
+# TRAIN_HYPER_PARAM = False
+# SAVE_MODEL = False
+
 # HYPERPARAMETER TESTING
 lambda_arr = [1e-3, 1e-5, 1e-7]
 hidden_size_arr = [667, 333]
@@ -370,6 +388,8 @@ if __name__ == '__main__':
     dev_neg_data = read_android_eval_data(dev_neg_data_path)
     test_pos_data = read_android_eval_data(test_pos_data_path)
     test_neg_data = read_android_eval_data(test_neg_data_path)
+
+    train_data_ubuntu_1 = train_data_ubuntu_1[:3000] # for speed
 
     if DEBUG:
         train_data_ubuntu_1 = train_data_ubuntu_1[:300]  # ONLY FOR DEBUGGING, REMOVE LINE TO RUN ON ALL TRAINING DATA
