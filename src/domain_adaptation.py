@@ -24,7 +24,7 @@ test_pos_data_path = "../Android-master/test.pos.txt"
 test_neg_data_path = "../Android-master/test.neg.txt"
 
 # CONSTANTS
-DFT_LAMBDA = 1e-4
+DFT_LAMBDA = 1e-5
 DFT_EMBEDDING_SIZE = 300
 DFT_HIDDEN_SIZE = 667
 DFT_LOSS_MARGIN = 0.2
@@ -37,9 +37,9 @@ DFT_BATCH_SIZE = 20
 DFT_PRINT_EPOCHS = 1
 DFT_EVAL_BATCH_SIZE = 200
 MAX_OR_MEAN_POOL = "MEAN"
-DEBUG = True
+DEBUG = False
 DFT_SAVE_MODEL_PATH = os.path.join("..", "models", "cnn")
-TRAIN_HYPER_PARAM = True
+TRAIN_HYPER_PARAM = False
 SAVE_MODEL = False
 
 # HYPERPARAMETER TESTING
@@ -169,6 +169,9 @@ def train(model_1, model_2, criterion_1, criterion_2, optimizer_1, optimizer_2, 
     rand_train_data_android_2 = train_data_2[1][torch.LongTensor(np.random.permutation(train_data_2[1].size(0)))]
 
     for i in range(num_samples / batch_size): # loop through all samples, by batch
+        if (i + 1) * 20 > rand_train_data_ubuntu_2.size(0) or (i + 1) * 20 > rand_train_data_android_2.size(0):
+            break
+
         ###############
         ### ENCODER ###
         ###############
@@ -249,14 +252,18 @@ def train_model(lambda_val, embedding_size, hidden_size, filter_width, max_or_me
     for iter in range(init_epoch, max_num_epochs + 1):
         current_loss += train(cnn, ffn, criterion_1, criterion_2, optimizer_1, optimizer_2, train_data_ubuntu_1, (train_data_ubuntu_2, train_data_android_2), (source_questions, target_questions), batch_size, lambda_val)
         if iter % training_checkpoint == 0:
-            d_MAP, d_MRR, d_P_1, d_P_5 = evaluate(cnn, dev_data, dev_label_dict, source_questions)
-            t_MAP, t_MRR, t_P_1, t_P_5 = evaluate(cnn, test_data, test_label_dict, source_questions)
+            # d_MAP, d_MRR, d_P_1, d_P_5 = evaluate(cnn, dev_data, dev_label_dict, source_questions)
+            # t_MAP, t_MRR, t_P_1, t_P_5 = evaluate(cnn, test_data, test_label_dict, source_questions)
             print("Epoch %d: Average Train Loss: %.5f, Time: %s" % (
             iter, (current_loss / training_checkpoint), timeSince(start)))
-            print("Dev MAP: %.1f, MRR: %.1f, P@1: %.1f, P@5: %.1f" % (
-            d_MAP * 100, d_MRR * 100, d_P_1 * 100, d_P_5 * 100))
-            print("Test MAP: %.1f, MRR: %.1f, P@1: %.1f, P@5: %.1f" % (
-            t_MAP * 100, t_MRR * 100, t_P_1 * 100, t_P_5 * 100))
+            # print("Dev MAP: %.1f, MRR: %.1f, P@1: %.1f, P@5: %.1f" % (
+            # d_MAP * 100, d_MRR * 100, d_P_1 * 100, d_P_5 * 100))
+            # print("Test MAP: %.1f, MRR: %.1f, P@1: %.1f, P@5: %.1f" % (
+            # t_MAP * 100, t_MRR * 100, t_P_1 * 100, t_P_5 * 100))
+            d_auc = evaluate_auc(cnn, dev_pos_data, dev_neg_data[:10000], target_questions, eval_batch_size)
+            t_auc = evaluate_auc(cnn, test_pos_data, test_neg_data[:10000], target_questions, eval_batch_size)
+            print("Dev AUC(0.05): %.2f" % (d_auc))
+            print("Test AUC(0.05): %.2f" % (t_auc))
             current_loss = 0
 
             # if SAVE_MODEL:
@@ -369,12 +376,14 @@ if __name__ == '__main__':
     test_pos_data = read_android_eval_data(test_pos_data_path)
     test_neg_data = read_android_eval_data(test_neg_data_path)
 
+    train_data_ubuntu_1 = train_data_ubuntu_1[:5000] # for speed
+
     if DEBUG:
         train_data_ubuntu_1 = train_data_ubuntu_1[:300]  # ONLY FOR DEBUGGING, REMOVE LINE TO RUN ON ALL TRAINING DATA
         # train_data_ubuntu_2 = train_data_ubuntu_2[:300]
         # train_data_android_2 = train_data_android_2[:300]
         dev_neg_data = dev_neg_data[:10000]
-        test_neg_data = dev_neg_data[:10000]
+        test_neg_data = test_neg_data[:10000]
 
     if TRAIN_HYPER_PARAM:
         i = 1
