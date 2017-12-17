@@ -2,7 +2,7 @@ import torch.nn as nn
 import torch.optim as optim
 from meter import *
 from optparse import OptionParser
-from cnn_model import CNN, train, evaluate
+from cnn_model import CNN, train
 from utils import *
 import os
 import sys
@@ -22,27 +22,31 @@ test_neg_data_path = "../Android-master/test.neg.txt"
 
 # CONSTANTS
 DFT_EMBEDDING_SIZE = 300
-DFT_HIDDEN_SIZE = 667
+DFT_HIDDEN_SIZE = 900
 DFT_LOSS_MARGIN = 0.2
 DFT_KERNEL_SIZE = 3 # number of words to include in each feature map
 DFT_DROPOUT_PROB = 0.3
 DFT_LEARNING_RATE = 0.0002
-DFT_NUM_EPOCHS = 5
+DFT_NUM_EPOCHS = 3
 DFT_BATCH_SIZE = 20
 DFT_PRINT_EPOCHS = 1
 MAX_OR_MEAN_POOL = "MEAN"
 DFT_EVAL_BATCH_SIZE = 200
-DEBUG = True
+DEBUG = False
 DFT_SAVE_MODEL_PATH = os.path.join("..", "models", "cnn")
 TRAIN_HYPER_PARAM = False
+<<<<<<< HEAD
+SAVE_MODEL = True
+=======
 SAVE_MODEL = False
+>>>>>>> cc9b71c6e7ebc02dbb272215471663642eda251b
 
 #HYPERPARAMETER TESTING
-hidden_size_arr = [667]
+hidden_size_arr = [900]
 filter_width_arr = [3, 4]
 loss_margin_arr = [0.1, 0.2]
 dropout_prob_arr = [0.2, 0.3]
-learning_rate_arr = [0.0002]
+learning_rate_arr = [0.0003]
 batch_size_arr = [20]
 max_mean_arr = ["MEAN"]
 
@@ -53,7 +57,7 @@ class Logger(object):
     """
     def __init__(self, filename):
         self.terminal = sys.stdout
-        self.log = open(filename, "w")
+        self.log = open(filename, "a")
 
     def write(self, message):
         self.terminal.write(message)
@@ -105,14 +109,13 @@ def train_model(embedding_size, hidden_size, filter_width, max_or_mean, max_num_
     for iter in range(init_epoch, max_num_epochs + 1):
         current_loss += train(cnn, criterion, optimizer, train_data, source_questions, batch_size, 21)
         if iter % training_checkpoint == 0:
-            d_MAP, d_MRR, d_P_1, d_P_5 = evaluate(cnn, dev_data, dev_label_dict, source_questions)
-            t_MAP, t_MRR, t_P_1, t_P_5 = evaluate(cnn, test_data, test_label_dict, source_questions)
             print("Epoch %d: Average Train Loss: %.5f, Time: %s" % (
                 iter, (current_loss / training_checkpoint), timeSince(start)))
-            print("Dev MAP: %.1f, MRR: %.1f, P@1: %.1f, P@5: %.1f" % (
-                d_MAP * 100, d_MRR * 100, d_P_1 * 100, d_P_5 * 100))
-            print("Test MAP: %.1f, MRR: %.1f, P@1: %.1f, P@5: %.1f" % (
-                t_MAP * 100, t_MRR * 100, t_P_1 * 100, t_P_5 * 100))
+            d_auc = evaluate_auc(cnn, dev_pos_data, dev_neg_data[:10000], target_questions, eval_batch_size)
+            t_auc = evaluate_auc(cnn, test_pos_data, test_neg_data[:10000], target_questions, eval_batch_size)
+            print("Dev AUC(0.05): %.2f" % (d_auc))
+            print("Test AUC(0.05): %.2f" % (t_auc))
+
             current_loss = 0
 
             if SAVE_MODEL:
@@ -120,7 +123,7 @@ def train_model(embedding_size, hidden_size, filter_width, max_or_mean, max_num_
                 state["model"] = cnn.state_dict()
                 state["optimizer"] = optimizer.state_dict()
                 state["epoch"] = iter
-                save_model(save_model_path, "cnn", state, iter == max_num_epochs)
+                save_model(save_model_path, "cnn_dt", state, iter == max_num_epochs)
 
     # Compute final results
     print("-------")
@@ -219,8 +222,10 @@ if __name__ == '__main__':
     test_pos_data = read_android_eval_data(test_pos_data_path)
     test_neg_data = read_android_eval_data(test_neg_data_path)
 
+    train_data = train_data[:3000]
+
     if DEBUG:
-        train_data = train_data[:400]  # ONLY FOR DEBUGGING, REMOVE LINE TO RUN ON ALL TRAINING DATA
+        train_data = train_data[:8000]  # ONLY FOR DEBUGGING, REMOVE LINE TO RUN ON ALL TRAINING DATA
         dev_neg_data = dev_neg_data[:20000]
         test_neg_data = dev_neg_data[:20000]
 
