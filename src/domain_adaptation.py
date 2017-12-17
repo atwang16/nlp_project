@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 import torch.nn as nn
 from optparse import OptionParser
+from cnn_model import evaluate
 from utils import *
 import os
 import sys
@@ -23,7 +24,7 @@ test_neg_data_path = "../Android-master/test.neg.txt"
 
 # CONSTANTS
 DFT_LAMBDA = 1e-4
-DFT_EMBEDDING_SIZE = 200
+DFT_EMBEDDING_SIZE = 300
 DFT_HIDDEN_SIZE = 667
 DFT_LOSS_MARGIN = 0.2
 DFT_KERNEL_SIZE = 3 # number of words to include in each feature map
@@ -113,7 +114,7 @@ class CNN(nn.Module):
 
 class FFN(nn.Module):
     def __init__(self, input_dim):
-        super(NN, self).__init__()
+        super(FFN, self).__init__()
         self.W_hidden_1 = nn.Linear(input_dim, 300)
         self.W_hidden_2 = nn.Linear(300, 150)
         self.W_out = nn.Linear(150, 2)
@@ -124,14 +125,6 @@ class FFN(nn.Module):
         hidden_2 = F.relu(self.W_hidden_1(hidden_1))
         out = self.softmax(self.W_out(hidden_2))
         return out
-
-
-def timeSince(since):
-    now = time.time()
-    s = now - since
-    m = math.floor(s / 60)
-    s -= m * 60
-    return '%dm %ds' % (m, s)
 
 
 def compute(model, question_embedding, question_mask, sample, is_training):
@@ -152,25 +145,40 @@ def evaluate_sample(model, question_data, sample, num_comparisons, is_training):
     return nn.CosineSimilarity(dim=1)(query_matrix, candidate_matrix)
 
 
-def train(model_1, model_2, criterion_1, criterion_2, optimizer_1, optimizer_2, train_data, question_data, batch_size, lambda_val):
+def evaluate_batch_classifier(model_1, model_2, question_data, sample, is_training):
+    title_embedding, title_mask, body_embedding, body_mask = question_data
+    encoded_title_matrix = compute(model_1, title_embedding, title_mask, sample, is_training)
+    encoded_body_matrix = compute(model_1, body_embedding, body_mask, sample, is_training)
+    encoded_matrix = 0.5 * (encoded_title_matrix + encoded_body_matrix)
+    encoded_matrix = encoded_matrix.squeeze(dim=2)
+
+    pdb.set_trace()
+
+    return model_2(encoded_matrix)
+
+
+def train(model_1, model_2, criterion_1, criterion_2, optimizer_1, optimizer_2, train_data_1, train_data_2, question_data, batch_size, lambda_val):
     cum_loss = 0
-    model.zero_grad()
+    model_1.zero_grad()
+    model_2.zero_grad()
 
     # Randomly shuffle training data
-    rand_train_data = train_data[torch.LongTensor(np.random.permutation(train_data.size(0)))]
+    rand_train_data_1 = train_data_1[torch.LongTensor(np.random.permutation(train_data_1.size(0)))]
+    num_samples = rand_train_data_1.size(0)
 
-    num_samples = rand_train_data.size(0)
+    rand_train_data_ubuntu_2 = train_data_2[0][torch.LongTensor(np.random.permutation(train_data_2[0].size(0)))]
+    rand_train_data_android_2 = train_data_2[1][torch.LongTensor(np.random.permutation(train_data_2[1].size(0)))]
 
     for i in range(num_samples / batch_size): # loop through all samples, by batch
         ###############
         ### ENCODER ###
         ###############
         optimizer_1.zero_grad()
-        input_batch = rand_train_data[i * batch_size:(i + 1) * batch_size]
+        input_batch = rand_train_data_1[i * batch_size:(i + 1) * batch_size]
         X_scores = []
 
         for sample in input_batch: # loop through each sample in batch
-            cos = evaluate_sample(model, question_data, sample, 21, True)
+            cos = evaluate_sample(model_1, question_data[0], sample, 21, True)
             # 21 is the number of comparisons, 1 positive and 20 negative
             X_scores.append(cos)
 
@@ -181,13 +189,16 @@ def train(model_1, model_2, criterion_1, criterion_2, optimizer_1, optimizer_2, 
         ### DOMAIN CLASSIFIER ###
         #########################
         optimizer_2.zero_grad()
-
-        #TODO
-
+        ubuntu = rand_train_data_ubuntu_2[i * 20:(i + 1) * 20]
+        android = rand_train_data_android_2[i * 20:(i + 1) * 20]
+        output_ubuntu = evaluate_batch_classifier(model_1, model_2, question_data[0], ubuntu, True)
+        output_android = evaluate_batch_classifier(model_1, model_2, question_data[1], android, True)
+        output_batch = torch.cat((output_ubuntu, output_android))
+        target_batch = torch.cat((torch.zeros(20), torch.ones(20)))
 
         # backpropagation
         loss_1 = criterion_1(X_scores, targets)
-        loss_2 = criterion_2()
+        loss_2 = criterion_2(output_batch, target_batch)
         total_loss = loss_1 - lambda_val*loss_2
         total_loss.backward()
         optimizer_1.step()
@@ -199,7 +210,9 @@ def train(model_1, model_2, criterion_1, criterion_2, optimizer_1, optimizer_2, 
 
 def train_model(lambda_val, embedding_size, hidden_size, filter_width, max_or_mean, max_num_epochs, batch_size, learning_rate_1, learning_rate_2,
                 loss_margin, training_checkpoint, dropout_prob):
-    global load_model_path, train_data, questions, dev_data, dev_label_dict, test_data, test_label_dict, opt_mrr, opt_model_params
+    global load_model_path, train_data_ubuntu_1, train_data_ubuntu_2, train_data_android_2, source_questions
+    global dev_pos_data, dev_neg_data, test_pos_data, test_neg_data, target_questions
+    global dev_data, dev_label_dict, test_data, test_label_dict, opt_mrr, opt_model_params
 
     # Generate model
     cnn = CNN(embedding_size, hidden_size, filter_width, max_or_mean, dropout_prob)
@@ -207,7 +220,7 @@ def train_model(lambda_val, embedding_size, hidden_size, filter_width, max_or_me
     criterion_1 = nn.MultiMarginLoss(margin=loss_margin)
     ffn = FFN(hidden_size)
     optimizer_2 = optim.Adam(ffn.parameters(), lr=learning_rate_2)
-    criterion_2 = nn.functional.cross_entropy()
+    criterion_2 = nn.functional.cross_entropy
     init_epoch = 1
 
     # Load model
@@ -235,10 +248,10 @@ def train_model(lambda_val, embedding_size, hidden_size, filter_width, max_or_me
     current_loss = 0
 
     for iter in range(init_epoch, max_num_epochs + 1):
-        current_loss += train(cnn, ffn, criterion_1, criterion_2, optimizer_1, optimizer_2, train_data, questions, batch_size, lambda_val)
+        current_loss += train(cnn, ffn, criterion_1, criterion_2, optimizer_1, optimizer_2, train_data_ubuntu_1, (train_data_ubuntu_2, train_data_android_2), (source_questions, target_questions), batch_size, lambda_val)
         if iter % training_checkpoint == 0:
-            d_MAP, d_MRR, d_P_1, d_P_5 = evaluate(cnn, dev_data, dev_label_dict, questions)
-            t_MAP, t_MRR, t_P_1, t_P_5 = evaluate(cnn, test_data, test_label_dict, questions)
+            d_MAP, d_MRR, d_P_1, d_P_5 = evaluate(cnn, dev_data, dev_label_dict, source_questions)
+            t_MAP, t_MRR, t_P_1, t_P_5 = evaluate(cnn, test_data, test_label_dict, source_questions)
             print("Epoch %d: Average Train Loss: %.5f, Time: %s" % (
             iter, (current_loss / training_checkpoint), timeSince(start)))
             print("Dev MAP: %.1f, MRR: %.1f, P@1: %.1f, P@5: %.1f" % (
@@ -257,13 +270,11 @@ def train_model(lambda_val, embedding_size, hidden_size, filter_width, max_or_me
     # Compute final results
     print("-------")
     print("FINAL RESULTS:")
-    d_MAP, d_MRR, d_P_1, d_P_5 = evaluate(cnn, dev_data, dev_label_dict, questions)
-    t_MAP, t_MRR, t_P_1, t_P_5 = evaluate(cnn, test_data, test_label_dict, questions)
+    d_auc = evaluate_auc(cnn, (dev_pos_data, dev_neg_data), target_questions)
+    t_auc = evaluate_auc(cnn, (test_pos_data, test_neg_data), target_questions)
     print("Training time: %s" % (timeSince(start)))
-    print("Dev MAP: %.1f, MRR: %.1f, P@1: %.1f, P@5: %.1f" % (
-        d_MAP * 100, d_MRR * 100, d_P_1 * 100, d_P_5 * 100))
-    print("Test MAP: %.1f, MRR: %.1f, P@1: %.1f, P@5: %.1f" % (
-        t_MAP * 100, t_MRR * 100, t_P_1 * 100, t_P_5 * 100))
+    print("Dev AUC(0.05): %.2f" % (d_auc))
+    print("Test AUC(0.05): %.2f" % (t_auc))
 
     if SAVE_MODEL:
         state = {}
@@ -272,35 +283,46 @@ def train_model(lambda_val, embedding_size, hidden_size, filter_width, max_or_me
         state["epoch"] = max_num_epochs if init_epoch < max_num_epochs else init_epoch
         save_model(save_model_path, "cnn", state, True)
 
-    if TRAIN_HYPER_PARAM and d_MRR > opt_mrr[0]:
-        opt_mrr = d_MRR, t_MRR
-        opt_model_params = {"lambda": lambda_val,
-                            "embedding_size": cnn.input_size,
-                            "hidden_size": cnn.hidden_size,
-                            "filter_width": cnn.n,
-                            "dropout_prob": cnn.dropout_prob,
-                            "pooling": cnn.max_or_mean,
-                            "number of epochs": max_num_epochs,
-                            "batch size": batch_size,
-                            "learning rate 1": learning_rate_1,
-                            "learning rate 2": learning_rate_2,
-                            "loss margin": loss_margin}
-
-    return (d_MAP, d_MRR, d_P_1, d_P_5)
+    return (d_auc, t_auc)
 
 
-def evaluate(model, eval_data, eval_label_dict, question_data):
-    global print_result
-    sorted_output_data = []
+def evaluate_batch(model, emb, mask, sample):
+    encoded_title_matrix = compute(model, emb[0], mask[0], sample, False, )
+    encoded_body_matrix = compute(model, emb[1], mask[1], sample, False)
+    encoded_matrix = 0.5 * (encoded_title_matrix + encoded_body_matrix)
+    encoded_matrix = encoded_matrix.squeeze(dim=2)
+    return encoded_matrix
 
-    for sample in eval_data:
-        cos = evaluate_sample(model, question_data, sample, 20, False)
-        golden_tags = eval_label_dict[sample[0]]
 
-        sorted_output = [golden_tags for _, golden_tags in sorted(zip(cos.data, golden_tags), reverse=True)]
-        sorted_output_data.append(sorted_output)
-    metrics = compute_metrics(sorted_output_data)
-    return metrics
+def evaluate_data(model, data, emb, mask, meter, pos, batch_size):
+    query_tensor = data[:,0]
+    candidate_tensor = data[:,1]
+    encoded_queries = evaluate_batch(model, emb, mask, query_tensor)
+    encoded_candidates = evaluate_batch(model, emb, mask, candidate_tensor)
+    scores = nn.CosineSimilarity(dim=1)(encoded_queries, encoded_candidates)
+    if pos:
+        expected = torch.ones(batch_size).type(torch.LongTensor)
+    else:
+        expected = torch.zeros(batch_size).type(torch.LongTensor)
+    meter.add(scores.data, expected)
+
+
+def evaluate_auc(model, eval_data, question_data):
+    pos_data, neg_data = eval_data
+    TITLE_EMB, TITLE_MASK, BODY_EMB, BODY_MASK = question_data
+    meter = AUCMeter()
+
+    # Evaluate positive data
+    evaluate_data(model, pos_data, (TITLE_EMB, BODY_EMB), (TITLE_MASK, BODY_MASK), meter, True, pos_data.size(0))
+
+    # Evaluate negative data
+    for i in range(neg_data.size(0) / EVAL_BATCH_SIZE):
+        input_data = neg_data[i*EVAL_BATCH_SIZE:(i+1)*EVAL_BATCH_SIZE]
+        evaluate_data(model, input_data, (TITLE_EMB, BODY_EMB), (TITLE_MASK, BODY_MASK), meter, False, EVAL_BATCH_SIZE)
+
+    score = meter.value(max_fpr=0.05)
+    return score
+
 
 if __name__ == '__main__':
     # Create parser and extract arguments
@@ -337,14 +359,25 @@ if __name__ == '__main__':
 
     # Load data
     print("LOADING DATA...")
-    embedding_dict = create_embedding_dict(word_embedding_path)
-    questions = create_question_dict("CNN", question_path, embedding_dict, DFT_HIDDEN_SIZE, init_padding=filter_width - 1)
-    train_data = read_training_data(train_data_path)
+    embedding = create_embedding_dict(word_embedding_path, True)
+    source_questions = create_question_dict("CNN", ubuntu_question_path, embedding, hidden_size, init_padding=filter_width - 1, embedding_size=DFT_EMBEDDING_SIZE)
+    target_questions = create_question_dict("CNN", android_question_path, embedding, hidden_size, init_padding=filter_width - 1, embedding_size=DFT_EMBEDDING_SIZE)
+    train_data_ubuntu_1 = read_training_data(train_data_path)
+    train_data_ubuntu_2 = torch.Tensor(list(source_questions[0].keys()))
+    train_data_android_2 = torch.Tensor(list(target_questions[0].keys()))
     dev_data, dev_label_dict, dev_scores = read_eval_data(dev_data_path)
     test_data, test_label_dict, test_scores = read_eval_data(test_data_path)
+    dev_pos_data = read_android_eval_data(dev_pos_data_path)
+    dev_neg_data = read_android_eval_data(dev_neg_data_path)
+    test_pos_data = read_android_eval_data(test_pos_data_path)
+    test_neg_data = read_android_eval_data(test_neg_data_path)
 
     if DEBUG:
-        train_data = train_data[:300]  # ONLY FOR DEBUGGING, REMOVE LINE TO RUN ON ALL TRAINING DATA
+        train_data_ubuntu_1 = train_data_ubuntu_1[:300]  # ONLY FOR DEBUGGING, REMOVE LINE TO RUN ON ALL TRAINING DATA
+        # train_data_ubuntu_2 = train_data_ubuntu_2[:300]
+        # train_data_android_2 = train_data_android_2[:300]
+        dev_neg_data = dev_neg_data[:10000]
+        test_neg_data = dev_neg_data[:10000]
 
     if TRAIN_HYPER_PARAM:
         i = 1

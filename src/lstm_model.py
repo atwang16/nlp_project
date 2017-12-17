@@ -22,7 +22,7 @@ HIDDEN_SIZE = 120
 DFT_NUM_EPOCHS = 5
 DFT_LEARNING_RATE = 7e-4
 DFT_PRINT_EPOCHS = 1
-DEBUG = False
+DEBUG = True
 
 class RNN(nn.Module):
 	def __init__(self, input_size, hidden_size, n_layers, batch_size):
@@ -58,6 +58,7 @@ def timeSince(since):
 
 
 def train(rnn, criterion, optimizer, train_data, question_data, hidden_size, num_layers, batch_size):
+	cum_loss = 0
 	hidden = Variable(torch.zeros(num_layers*2, batch_size, hidden_size))
 	state = Variable(torch.zeros(num_layers*2, batch_size, hidden_size))
 	rnn.zero_grad()
@@ -86,7 +87,8 @@ def train(rnn, criterion, optimizer, train_data, question_data, hidden_size, num
 		loss = criterion(X_scores, targets)
 		loss.backward()
 		optimizer.step()
-	return loss.data[0]
+		cum_loss += loss.data[0]
+	return cum_loss
 
 
 def compute_metrics(data):
