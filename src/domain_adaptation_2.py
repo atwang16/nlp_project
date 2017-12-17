@@ -20,19 +20,19 @@ test_pos_data_path = "../Android-master/test.pos.txt"
 test_neg_data_path = "../Android-master/test.neg.txt"
 
 # CONSTANTS
-DFT_LAMBDA = 1e-5
+DFT_LAMBDA = 1e-7
 DFT_EMBEDDING_SIZE = 300
-DFT_HIDDEN_SIZE = 667
+DFT_HIDDEN_SIZE = 900
 DFT_LOSS_MARGIN = 0.2
 DFT_KERNEL_SIZE = 3 # number of words to include in each feature map
-DFT_DROPOUT_PROB = 0.1
-DFT_LEARNING_RATE_1 = 0.0001
-DFT_LEARNING_RATE_2 = -0.0001
+DFT_DROPOUT_PROB = 0.3
+DFT_LEARNING_RATE_1 = 0.0002
+DFT_LEARNING_RATE_2 = -0.0002
 DFT_NUM_EPOCHS = 5
 DFT_BATCH_SIZE = 20
 DFT_PRINT_EPOCHS = 1
-DFT_EVAL_BATCH_SIZE = 200
 MAX_OR_MEAN_POOL = "MEAN"
+DFT_EVAL_BATCH_SIZE = 200
 
 # CONTROL PROGRAM OUTPUT
 DEBUG = False
@@ -40,24 +40,6 @@ DFT_SAVE_MODEL_PATH = os.path.join("..", "models", "cnn")
 TRAIN_HYPER_PARAM = False
 SAVE_MODEL = False
 LOG_IN_TEXT_FILE = False
-
-# DFT_LAMBDA = 1e-7
-# DFT_EMBEDDING_SIZE = 300
-# DFT_HIDDEN_SIZE = 900
-# DFT_LOSS_MARGIN = 0.2
-# DFT_KERNEL_SIZE = 3 # number of words to include in each feature map
-# DFT_DROPOUT_PROB = 0.3
-# DFT_LEARNING_RATE_1 = 0.0002
-# DFT_LEARNING_RATE_2 = -0.0002
-# DFT_NUM_EPOCHS = 5
-# DFT_BATCH_SIZE = 20
-# DFT_PRINT_EPOCHS = 1
-# MAX_OR_MEAN_POOL = "MEAN"
-# DFT_EVAL_BATCH_SIZE = 200
-# DEBUG = False
-# DFT_SAVE_MODEL_PATH = os.path.join("..", "models", "cnn")
-# TRAIN_HYPER_PARAM = False
-# SAVE_MODEL = False
 
 # HYPERPARAMETER TESTING
 lambda_arr = [1e-3, 1e-5, 1e-7]
