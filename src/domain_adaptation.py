@@ -9,6 +9,7 @@ from cnn_model import evaluate
 from utils import *
 import os
 import sys
+from meter import AUCMeter
 
 # PATHS
 word_embedding_path = "../glove.840B.300d.txt"
@@ -34,6 +35,7 @@ DFT_LEARNING_RATE_2 = -0.0001
 DFT_NUM_EPOCHS = 5
 DFT_BATCH_SIZE = 20
 DFT_PRINT_EPOCHS = 1
+DFT_EVAL_BATCH_SIZE = 200
 MAX_OR_MEAN_POOL = "MEAN"
 DEBUG = True
 DFT_SAVE_MODEL_PATH = os.path.join("..", "models", "cnn")
@@ -209,7 +211,7 @@ def train(model_1, model_2, criterion_1, criterion_2, optimizer_1, optimizer_2, 
 
 
 def train_model(lambda_val, embedding_size, hidden_size, filter_width, max_or_mean, max_num_epochs, batch_size, learning_rate_1, learning_rate_2,
-                loss_margin, training_checkpoint, dropout_prob):
+                loss_margin, training_checkpoint, dropout_prob, eval_batch_size):
     global load_model_path, train_data_ubuntu_1, train_data_ubuntu_2, train_data_android_2, source_questions
     global dev_pos_data, dev_neg_data, test_pos_data, test_neg_data, target_questions
     global dev_data, dev_label_dict, test_data, test_label_dict, opt_mrr, opt_model_params
@@ -223,10 +225,10 @@ def train_model(lambda_val, embedding_size, hidden_size, filter_width, max_or_me
     criterion_2 = nn.functional.cross_entropy
     init_epoch = 1
 
-    # Load model
-    if load_model_path is not None:
-        print("Loading model from \"" + load_model_path + "\"...")
-        init_epoch = load_model(load_model_path, cnn, optimizer)
+    # # Load model
+    # if load_model_path is not None:
+    #     print("Loading model from \"" + load_model_path + "\"...")
+    #     init_epoch = load_model(load_model_path, cnn, optimizer)
 
     # Training
     print("***************************************")
@@ -260,68 +262,64 @@ def train_model(lambda_val, embedding_size, hidden_size, filter_width, max_or_me
             t_MAP * 100, t_MRR * 100, t_P_1 * 100, t_P_5 * 100))
             current_loss = 0
 
-            if SAVE_MODEL:
-                state = {}
-                state["model"] = cnn.state_dict()
-                state["optimizer"] = optimizer.state_dict()
-                state["epoch"] = iter
-                save_model(save_model_path, "cnn", state, iter == max_num_epochs)
+            # if SAVE_MODEL:
+            #     state = {}
+            #     state["model"] = cnn.state_dict()
+            #     state["optimizer"] = optimizer.state_dict()
+            #     state["epoch"] = iter
+            #     save_model(save_model_path, "cnn", state, iter == max_num_epochs)
 
     # Compute final results
     print("-------")
     print("FINAL RESULTS:")
-    d_auc = evaluate_auc(cnn, (dev_pos_data, dev_neg_data), target_questions)
-    t_auc = evaluate_auc(cnn, (test_pos_data, test_neg_data), target_questions)
+    d_auc = evaluate_auc(cnn, dev_pos_data, dev_neg_data, target_questions, eval_batch_size)
+    t_auc = evaluate_auc(cnn, test_pos_data, test_neg_data, target_questions, eval_batch_size)
     print("Training time: %s" % (timeSince(start)))
     print("Dev AUC(0.05): %.2f" % (d_auc))
     print("Test AUC(0.05): %.2f" % (t_auc))
 
-    if SAVE_MODEL:
-        state = {}
-        state["model"] = cnn.state_dict()
-        state["optimizer"] = optimizer.state_dict()
-        state["epoch"] = max_num_epochs if init_epoch < max_num_epochs else init_epoch
-        save_model(save_model_path, "cnn", state, True)
+    # if SAVE_MODEL:
+    #     state = {}
+    #     state["model"] = cnn.state_dict()
+    #     state["optimizer"] = optimizer.state_dict()
+    #     state["epoch"] = max_num_epochs if init_epoch < max_num_epochs else init_epoch
+    #     save_model(save_model_path, "cnn", state, True)
 
     return (d_auc, t_auc)
 
 
-def evaluate_batch(model, emb, mask, sample):
-    encoded_title_matrix = compute(model, emb[0], mask[0], sample, False, )
-    encoded_body_matrix = compute(model, emb[1], mask[1], sample, False)
-    encoded_matrix = 0.5 * (encoded_title_matrix + encoded_body_matrix)
-    encoded_matrix = encoded_matrix.squeeze(dim=2)
-    return encoded_matrix
+def evaluate_auc(model, pos_data, neg_data, question_data, batch_size):
+    auc = AUCMeter()
 
+    evaluate_pair_set(model, pos_data, 1, question_data, auc, batch_size)
+    evaluate_pair_set(model, neg_data, 0, question_data, auc, batch_size)
 
-def evaluate_data(model, data, emb, mask, meter, pos, batch_size):
-    query_tensor = data[:,0]
-    candidate_tensor = data[:,1]
-    encoded_queries = evaluate_batch(model, emb, mask, query_tensor)
-    encoded_candidates = evaluate_batch(model, emb, mask, candidate_tensor)
-    scores = nn.CosineSimilarity(dim=1)(encoded_queries, encoded_candidates)
-    if pos:
-        expected = torch.ones(batch_size).type(torch.LongTensor)
-    else:
-        expected = torch.zeros(batch_size).type(torch.LongTensor)
-    meter.add(scores.data, expected)
+    return auc.value(max_fpr=0.05)
 
+def evaluate_pair_set(model, pairs, label, question_data, auc, batch_size):
+    for i in range(pairs.size(0) / batch_size):
+        input_batch = pairs[i * batch_size:(i + 1) * batch_size]
 
-def evaluate_auc(model, eval_data, question_data):
-    pos_data, neg_data = eval_data
+        encoding_1 = compute_encoding(model, question_data, input_batch[:, 0])
+        encoding_2 = compute_encoding(model, question_data, input_batch[:, 1])
+
+        score = nn.CosineSimilarity(dim=1)(encoding_1, encoding_2)
+
+        auc.add(score.data, torch.LongTensor([label]*batch_size))
+
+def compute_encoding(model, question_data, list_of_ids):
     TITLE_EMB, TITLE_MASK, BODY_EMB, BODY_MASK = question_data
-    meter = AUCMeter()
 
-    # Evaluate positive data
-    evaluate_data(model, pos_data, (TITLE_EMB, BODY_EMB), (TITLE_MASK, BODY_MASK), meter, True, pos_data.size(0))
+    title_embeddings = Variable(torch.stack([TITLE_EMB[id] for id in list_of_ids], dim=0), requires_grad=True)
+    title_mask = Variable(torch.stack([TITLE_MASK[id] for id in list_of_ids], dim=0), requires_grad=False)
+    body_embeddings = Variable(torch.stack([BODY_EMB[id] for id in list_of_ids], dim=0), requires_grad=True)
+    body_mask = Variable(torch.stack([BODY_MASK[id] for id in list_of_ids], dim=0), requires_grad=False)
 
-    # Evaluate negative data
-    for i in range(neg_data.size(0) / EVAL_BATCH_SIZE):
-        input_data = neg_data[i*EVAL_BATCH_SIZE:(i+1)*EVAL_BATCH_SIZE]
-        evaluate_data(model, input_data, (TITLE_EMB, BODY_EMB), (TITLE_MASK, BODY_MASK), meter, False, EVAL_BATCH_SIZE)
+    title_matrix = model(title_embeddings, title_mask, False)
+    body_matrix = model(body_embeddings, body_mask, False)
+    encoded_matrix = 0.5 * (title_matrix + body_matrix)
 
-    score = meter.value(max_fpr=0.05)
-    return score
+    return encoded_matrix.squeeze(dim=2)
 
 
 if __name__ == '__main__':
@@ -329,6 +327,7 @@ if __name__ == '__main__':
     parser = OptionParser()
     parser.add_option("--lambda", dest="lambda_val", default=str(DFT_LAMBDA))
     parser.add_option("--batch_size", dest="batch_size", default=str(DFT_BATCH_SIZE))
+    parser.add_option("--eval_batch_size", dest="eval_batch_size", default=str(DFT_EVAL_BATCH_SIZE))
     parser.add_option("--hidden_size", dest="hidden_size", default=str(DFT_HIDDEN_SIZE))
     parser.add_option("--num_epochs", dest="num_epochs", default=str(DFT_NUM_EPOCHS))
     parser.add_option("--learning_rate_1", dest="learning_rate_1", default=str(DFT_LEARNING_RATE_1))
@@ -356,6 +355,7 @@ if __name__ == '__main__':
     loss_margin = float(opts.loss_margin)
     dropout_prob = float(opts.dropout_prob)
     max_or_mean = opts.max_or_mean
+    eval_batch_size = int(opts.eval_batch_size)
 
     # Load data
     print("LOADING DATA...")
@@ -403,7 +403,8 @@ if __name__ == '__main__':
                                                         lr2,
                                                         lm,
                                                         training_checkpoint,
-                                                        dp)
+                                                        dp,
+                                                        eval_batch_size)
                                             print "Model " + str(i) + "/" + str(total)
                                             i += 1
         print("-------------")
@@ -423,7 +424,8 @@ if __name__ == '__main__':
                     learning_rate_2,
                     loss_margin,
                     training_checkpoint,
-                    dropout_prob)
+                    dropout_prob,
+                    eval_batch_size)
 
 
 # TODO: retrain hyperparameters
