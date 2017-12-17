@@ -39,7 +39,7 @@ DFT_EVAL_BATCH_SIZE = 200
 MAX_OR_MEAN_POOL = "MEAN"
 DEBUG = True
 DFT_SAVE_MODEL_PATH = os.path.join("..", "models", "cnn")
-TRAIN_HYPER_PARAM = False
+TRAIN_HYPER_PARAM = True
 SAVE_MODEL = False
 
 # HYPERPARAMETER TESTING
@@ -124,7 +124,7 @@ class FFN(nn.Module):
 
     def forward(self, input):
         hidden_1 = F.relu(self.W_hidden_1(input))
-        hidden_2 = F.relu(self.W_hidden_1(hidden_1))
+        hidden_2 = F.relu(self.W_hidden_2(hidden_1))
         out = self.softmax(self.W_out(hidden_2))
         return out
 
@@ -153,9 +153,6 @@ def evaluate_batch_classifier(model_1, model_2, question_data, sample, is_traini
     encoded_body_matrix = compute(model_1, body_embedding, body_mask, sample, is_training)
     encoded_matrix = 0.5 * (encoded_title_matrix + encoded_body_matrix)
     encoded_matrix = encoded_matrix.squeeze(dim=2)
-
-    pdb.set_trace()
-
     return model_2(encoded_matrix)
 
 
@@ -196,7 +193,7 @@ def train(model_1, model_2, criterion_1, criterion_2, optimizer_1, optimizer_2, 
         output_ubuntu = evaluate_batch_classifier(model_1, model_2, question_data[0], ubuntu, True)
         output_android = evaluate_batch_classifier(model_1, model_2, question_data[1], android, True)
         output_batch = torch.cat((output_ubuntu, output_android))
-        target_batch = torch.cat((torch.zeros(20), torch.ones(20)))
+        target_batch = Variable(torch.cat((torch.zeros(20).type(torch.LongTensor), torch.ones(20).type(torch.LongTensor))))
 
         # backpropagation
         loss_1 = criterion_1(X_scores, targets)
@@ -233,7 +230,7 @@ def train_model(lambda_val, embedding_size, hidden_size, filter_width, max_or_me
     # Training
     print("***************************************")
     print("Starting run with following parameters:")
-    print(" --lambda:           %d" % (lambda_val))
+    print(" --lambda:           %f" % (lambda_val))
     print(" --embedding size:   %d" % (cnn.input_size))
     print(" --hidden size:      %d" % (cnn.hidden_size))
     print(" --filter width:     %d" % (cnn.n))
