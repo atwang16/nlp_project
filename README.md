@@ -32,3 +32,7 @@ To run the models, move into the `src` directory and run the following commands,
 **Domain Adaptation CNN-LogReg Model**:
 
 `python2 domain_adaptation_2.py`
+
+## Datasets
+
+Our project uses the [AskUbuntu](https://github.com/taolei87/askubuntu) and [Android](https://github.com/jiangfeng1124/Android) datasets from the associated Stack Exchange forums. To use these datasets, clone or download them and place the folders in the root of the project with the names `askubuntu-master` and `Android-master`. You will additionally need to download the [GloVe embeddings](https://nlp.stanford.edu/projects/glove/), unzipped and stored in the root of the project, and the more complete 200-Dimensional word2vec embeddings found in the askubuntu repository README (place this file in the `askubuntu-master/vector` directory).
