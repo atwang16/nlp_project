@@ -2,8 +2,6 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import gzip
 import sys
-import numpy as np
-import torch.nn as nn
 from meter import AUCMeter
 import torch
 
@@ -17,19 +15,16 @@ TEST_NEG_PATH = "../Android-master/test.neg.txt"
 def read_raw_data(filename):
     question_to_index = {}
     text = []
-    # bodies = []
     questions = gzip.open(filename, 'rb').read().strip().split('\n')
     for line in questions:
         id_question_split = line.split('\t')
         question_to_index[int(id_question_split[0])] = len(question_to_index)
         text.append(id_question_split[1] + " " + id_question_split[2])
-        # bodies.append(id_question_split[2])
     return (question_to_index, text)
 
 def compute_tfidf(text):
     vectorizer = TfidfVectorizer()
     rep = vectorizer.fit_transform(text)
-    # body_rep = vectorizer.fit_transform(body_data)
     return rep
 
 def import_pairs(filename):
@@ -46,7 +41,6 @@ def evaluate(pairs, label, text_data, question_lookup, auc):
         cos = cosine_similarity(text_data.getrow(question_lookup[id_1]),
                                 text_data.getrow(question_lookup[id_2]))
         cos = float(cos)
-        # print cos
 
         auc.add(torch.DoubleTensor([cos]), torch.LongTensor([label]))
 

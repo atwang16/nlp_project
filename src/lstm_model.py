@@ -1,11 +1,8 @@
-import numpy as np
-import math, sys
+import math
 import torch.nn as nn
-import torch
 import time
 from torch.autograd import Variable
 import torch.optim as optim
-import pdb
 from lstm_model_utils import *
 from optparse import OptionParser
 
