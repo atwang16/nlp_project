@@ -161,7 +161,8 @@ def train(model, criterion, optimizer, train_data, question_data, batch_size, nu
 
 def train_model(embedding_size, hidden_size, filter_width, max_or_mean, max_num_epochs, batch_size, learning_rate,
                 loss_margin, training_checkpoint, dropout_prob):
-    global load_model_path, train_data, questions, dev_data, dev_label_dict, test_data, test_label_dict, opt_mrr, opt_model_params
+    global load_model_path, train_data, questions
+    global dev_data, dev_label_dict, test_data, test_label_dict, opt_mrr, opt_model_params
 
     # Generate model
     cnn = CNN(embedding_size, hidden_size, filter_width, max_or_mean, dropout_prob)

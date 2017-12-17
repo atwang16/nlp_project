@@ -2,10 +2,11 @@ import torch.nn as nn
 import torch.optim as optim
 from meter import *
 from optparse import OptionParser
-from cnn_model import CNN, train, compute, evaluate
+from cnn_model import CNN, train, evaluate
 from utils import *
 import os
 import sys
+from torch.autograd import Variable
 
 # PATHS
 word_embedding_path = "../glove.840B.300d.txt"
@@ -21,8 +22,8 @@ test_neg_data_path = "../Android-master/test.neg.txt"
 
 # CONSTANTS
 DFT_EMBEDDING_SIZE = 300
-DFT_HIDDEN_SIZE = 333
-DFT_LOSS_MARGIN = 0.1
+DFT_HIDDEN_SIZE = 667
+DFT_LOSS_MARGIN = 0.2
 DFT_KERNEL_SIZE = 3 # number of words to include in each feature map
 DFT_DROPOUT_PROB = 0.3
 DFT_LEARNING_RATE = 0.0002
@@ -30,7 +31,7 @@ DFT_NUM_EPOCHS = 5
 DFT_BATCH_SIZE = 20
 DFT_PRINT_EPOCHS = 1
 MAX_OR_MEAN_POOL = "MEAN"
-EVAL_BATCH_SIZE = 100
+DFT_EVAL_BATCH_SIZE = 200
 DEBUG = True
 DFT_SAVE_MODEL_PATH = os.path.join("..", "models", "cnn")
 TRAIN_HYPER_PARAM = False
@@ -38,12 +39,12 @@ SAVE_MODEL = False
 
 #HYPERPARAMETER TESTING
 hidden_size_arr = [667]
-filter_width_arr = [2, 3, 4]
-loss_margin_arr = [0.1, 0.2, 0.4]
-dropout_prob_arr = [0.1, 0.2, 0.3]
+filter_width_arr = [3, 4]
+loss_margin_arr = [0.1, 0.2]
+dropout_prob_arr = [0.2, 0.3]
 learning_rate_arr = [0.0002]
 batch_size_arr = [20]
-max_mean_arr = ["MAX", "MEAN"]
+max_mean_arr = ["MEAN"]
 
 
 class Logger(object):
@@ -68,10 +69,10 @@ sys.stdout = Logger("../models/cnn/direct_transfer_results.txt")
 
 
 def train_model(embedding_size, hidden_size, filter_width, max_or_mean, max_num_epochs, batch_size, learning_rate,
-                loss_margin, training_checkpoint, dropout_prob):
+                loss_margin, training_checkpoint, dropout_prob, eval_batch_size):
     global load_model_path, train_data, source_questions
-    global dev_pos_data, dev_neg_data, test_pos_data, test_neg_data, target_questions
     global dev_data, dev_label_dict, test_data, test_label_dict
+    global dev_pos_data, dev_neg_data, test_pos_data, test_neg_data, target_questions
 
     # Generate model
     cnn = CNN(embedding_size, hidden_size, filter_width, max_or_mean, dropout_prob)
@@ -102,7 +103,7 @@ def train_model(embedding_size, hidden_size, filter_width, max_or_mean, max_num_
     current_loss = 0
 
     for iter in range(init_epoch, max_num_epochs + 1):
-        current_loss += train(cnn, criterion, optimizer, train_data, source_questions, batch_size, 2)
+        current_loss += train(cnn, criterion, optimizer, train_data, source_questions, batch_size, 21)
         if iter % training_checkpoint == 0:
             d_MAP, d_MRR, d_P_1, d_P_5 = evaluate(cnn, dev_data, dev_label_dict, source_questions)
             t_MAP, t_MRR, t_P_1, t_P_5 = evaluate(cnn, test_data, test_label_dict, source_questions)
@@ -124,8 +125,8 @@ def train_model(embedding_size, hidden_size, filter_width, max_or_mean, max_num_
     # Compute final results
     print("-------")
     print("FINAL RESULTS:")
-    d_auc = evaluate_auc(cnn, (dev_pos_data, dev_neg_data), target_questions)
-    t_auc = evaluate_auc(cnn, (test_pos_data, test_neg_data), target_questions)
+    d_auc = evaluate_auc(cnn, dev_pos_data, dev_neg_data, target_questions, eval_batch_size)
+    t_auc = evaluate_auc(cnn, test_pos_data, test_neg_data, target_questions, eval_batch_size)
     print("Training time: %s" % (timeSince(start)))
     print("Dev AUC(0.05): %.2f" % (d_auc))
     print("Test AUC(0.05): %.2f" % (t_auc))
@@ -140,48 +141,45 @@ def train_model(embedding_size, hidden_size, filter_width, max_or_mean, max_num_
     return (d_auc, t_auc)
 
 
-def evaluate_batch(model, emb, mask, sample):
-    encoded_title_matrix = compute(model, emb[0], mask[0], sample, False, )
-    encoded_body_matrix = compute(model, emb[1], mask[1], sample, False)
-    encoded_matrix = 0.5 * (encoded_title_matrix + encoded_body_matrix)
-    encoded_matrix = encoded_matrix.squeeze(dim=2)
-    return encoded_matrix
+def evaluate_auc(model, pos_data, neg_data, question_data, batch_size):
+    auc = AUCMeter()
 
+    evaluate_pair_set(model, pos_data, 1, question_data, auc, batch_size)
+    evaluate_pair_set(model, neg_data, 0, question_data, auc, batch_size)
 
-def evaluate_data(model, data, emb, mask, meter, pos, batch_size):
-    query_tensor = data[:,0]
-    candidate_tensor = data[:,1]
-    encoded_queries = evaluate_batch(model, emb, mask, query_tensor)
-    encoded_candidates = evaluate_batch(model, emb, mask, candidate_tensor)
-    scores = nn.CosineSimilarity(dim=1)(encoded_queries, encoded_candidates)
-    if pos:
-        expected = torch.ones(batch_size).type(torch.LongTensor)
-    else:
-        expected = torch.zeros(batch_size).type(torch.LongTensor)
-    meter.add(scores.data, expected)
+    return auc.value(max_fpr=0.05)
 
+def evaluate_pair_set(model, pairs, label, question_data, auc, batch_size):
+    for i in range(pairs.size(0) / batch_size):
+        input_batch = pairs[i * batch_size:(i + 1) * batch_size]
 
-def evaluate_auc(model, eval_data, question_data):
-    pos_data, neg_data = eval_data
+        encoding_1 = compute_encoding(model, question_data, input_batch[:, 0])
+        encoding_2 = compute_encoding(model, question_data, input_batch[:, 1])
+
+        score = nn.CosineSimilarity(dim=1)(encoding_1, encoding_2)
+
+        auc.add(score.data, torch.LongTensor([label]*batch_size))
+
+def compute_encoding(model, question_data, list_of_ids):
     TITLE_EMB, TITLE_MASK, BODY_EMB, BODY_MASK = question_data
-    meter = AUCMeter()
 
-    # Evaluate positive data
-    evaluate_data(model, pos_data, (TITLE_EMB, BODY_EMB), (TITLE_MASK, BODY_MASK), meter, True, pos_data.size(0))
+    title_embeddings = Variable(torch.stack([TITLE_EMB[id] for id in list_of_ids], dim=0), requires_grad=True)
+    title_mask = Variable(torch.stack([TITLE_MASK[id] for id in list_of_ids], dim=0), requires_grad=False)
+    body_embeddings = Variable(torch.stack([BODY_EMB[id] for id in list_of_ids], dim=0), requires_grad=True)
+    body_mask = Variable(torch.stack([BODY_MASK[id] for id in list_of_ids], dim=0), requires_grad=False)
 
-    # Evaluate negative data
-    for i in range(neg_data.size(0) / EVAL_BATCH_SIZE):
-        input_data = neg_data[i*EVAL_BATCH_SIZE:(i+1)*EVAL_BATCH_SIZE]
-        evaluate_data(model, input_data, (TITLE_EMB, BODY_EMB), (TITLE_MASK, BODY_MASK), meter, False, EVAL_BATCH_SIZE)
+    title_matrix = model(title_embeddings, title_mask, False)
+    body_matrix = model(body_embeddings, body_mask, False)
+    encoded_matrix = 0.5 * (title_matrix + body_matrix)
 
-    score = meter.value(max_fpr=0.05)
-    return score
+    return encoded_matrix.squeeze(dim=2)
 
 
 if __name__ == '__main__':
     # Create parser and extract arguments
     parser = OptionParser()
     parser.add_option("--batch_size", dest="batch_size", default=str(DFT_BATCH_SIZE))
+    parser.add_option("--eval_batch_size", dest="eval_batch_size", default=str(DFT_EVAL_BATCH_SIZE))
     parser.add_option("--hidden_size", dest="hidden_size", default=str(DFT_HIDDEN_SIZE))
     parser.add_option("--num_epochs", dest="num_epochs", default=str(DFT_NUM_EPOCHS))
     parser.add_option("--learning_rate", dest="learning_rate", default=str(DFT_LEARNING_RATE))
@@ -206,12 +204,13 @@ if __name__ == '__main__':
     loss_margin = float(opts.loss_margin)
     dropout_prob = float(opts.dropout_prob)
     max_or_mean = opts.max_or_mean
+    eval_batch_size = int(opts.eval_batch_size)
 
     # Load data
     print("LOADING DATA...")
     embedding = create_embedding_dict(word_embedding_path, True)
-    source_questions = create_question_dict("CNN", ubuntu_question_path, embedding, hidden_size, embedding_size=DFT_EMBEDDING_SIZE)
-    target_questions = create_question_dict("CNN", android_question_path, embedding, hidden_size, embedding_size=DFT_EMBEDDING_SIZE)
+    source_questions = create_question_dict("CNN", ubuntu_question_path, embedding, hidden_size, embedding_size=DFT_EMBEDDING_SIZE, init_padding=filter_width - 1)
+    target_questions = create_question_dict("CNN", android_question_path, embedding, hidden_size, embedding_size=DFT_EMBEDDING_SIZE, init_padding=filter_width - 1)
     train_data = read_training_data(train_data_path)
     dev_data, dev_label_dict, dev_scores = read_eval_data(dev_data_path)
     test_data, test_label_dict, test_scores = read_eval_data(test_data_path)
@@ -219,11 +218,11 @@ if __name__ == '__main__':
     dev_neg_data = read_android_eval_data(dev_neg_data_path)
     test_pos_data = read_android_eval_data(test_pos_data_path)
     test_neg_data = read_android_eval_data(test_neg_data_path)
-    
+
     if DEBUG:
-        train_data = train_data[:300]  # ONLY FOR DEBUGGING, REMOVE LINE TO RUN ON ALL TRAINING DATA
-        dev_neg_data = dev_neg_data[:10000]
-        test_neg_data = dev_neg_data[:10000]
+        train_data = train_data[:400]  # ONLY FOR DEBUGGING, REMOVE LINE TO RUN ON ALL TRAINING DATA
+        dev_neg_data = dev_neg_data[:20000]
+        test_neg_data = dev_neg_data[:20000]
 
     if TRAIN_HYPER_PARAM:
         i = 1
@@ -245,7 +244,8 @@ if __name__ == '__main__':
                                                 lr,
                                                 lm,
                                                 training_checkpoint,
-                                                dp)
+                                                dp,
+                                                eval_batch_size)
                                     print "Model " + str(i) + "/" + str(total)
                                     i += 1
 
@@ -259,6 +259,7 @@ if __name__ == '__main__':
                     learning_rate,
                     loss_margin,
                     training_checkpoint,
-                    dropout_prob)
+                    dropout_prob,
+                    eval_batch_size)
 
     
